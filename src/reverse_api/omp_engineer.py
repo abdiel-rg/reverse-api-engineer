@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from .base_engineer import BaseEngineer
@@ -13,39 +16,54 @@ class OMPEngineer(BaseEngineer):
     """Run code generation through the user's configured Oh My Pi CLI."""
 
     def __init__(self, *args: Any, omp_model: str | None = None, **kwargs: Any) -> None:
+        kwargs.setdefault("sdk", "omp")
         super().__init__(*args, **kwargs)
         self.omp_model = omp_model.strip() if isinstance(omp_model, str) else ""
 
-    async def _run_omp(self, system_prompt: str, user_message: str) -> bool:
+    async def _run_omp(
+        self,
+        system_prompt: str,
+        user_message: str,
+        mcp_servers: dict[str, dict[str, Any]] | None = None,
+    ) -> bool:
         executable = shutil.which("omp")
         if executable is None:
             self.ui.error("Oh My Pi CLI not found in PATH. Install OMP and configure its provider credentials first.")
             return False
 
-        args = [
-            executable,
-            "--print",
-            "--no-session",
-            "--cwd",
-            str(self.scripts_dir.parent.parent),
-            "--system-prompt",
-            system_prompt,
-        ]
-        if self.omp_model:
-            args.extend(["--model", self.omp_model])
-        args.append(user_message)
-
+        temp_workspace = tempfile.TemporaryDirectory(prefix="rae-omp-") if mcp_servers else None
+        workspace = temp_workspace.name if temp_workspace else str(self.scripts_dir.parent.parent)
         try:
+            if mcp_servers:
+                mcp_config = Path(workspace) / ".omp" / "mcp.json"
+                mcp_config.parent.mkdir(parents=True)
+                mcp_config.write_text(json.dumps({"mcpServers": mcp_servers}), encoding="utf-8")
+            args = [
+                executable,
+                "--print",
+                "--no-session",
+                "--cwd",
+                workspace,
+            ]
+            if mcp_servers:
+                args.extend(["--add-dir", str(self.scripts_dir.parent.parent)])
+            args.extend(["--system-prompt", system_prompt])
+            if self.omp_model:
+                args.extend(["--model", self.omp_model])
+            args.append(user_message)
+
+            process = None
             process = await asyncio.create_subprocess_exec(
                 *args,
-                cwd=str(self.scripts_dir.parent.parent),
+                cwd=workspace,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
         except TimeoutError:
-            process.kill()
-            await process.wait()
+            if process is not None:
+                process.kill()
+                await process.wait()
             self.ui.error("OMP session timed out after 10 minutes")
             self.message_store.save_error("OMP session timed out")
             return False
@@ -54,6 +72,9 @@ class OMPEngineer(BaseEngineer):
             self.ui.error(f"Could not start OMP: {error_message}")
             self.message_store.save_error(error_message)
             return False
+        finally:
+            if temp_workspace:
+                temp_workspace.cleanup()
 
         output = stdout.decode("utf-8", errors="replace").strip()
         if output:

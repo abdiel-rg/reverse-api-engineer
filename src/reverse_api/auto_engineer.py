@@ -8,6 +8,7 @@ when missing, validated with ``--help``) instead of attaching browser MCP here.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -33,11 +34,11 @@ from .agent_browser import (
 from .engineer import ClaudeEngineer
 from .omp_engineer import OMPEngineer
 from .opencode_engineer import OpenCodeEngineer, debug_log, format_error
-from .utils import build_sdk_env, get_har_dir
+from .utils import build_sdk_env, extract_domain_from_har, get_har_dir
 
 
 class OMPAutoEngineer(OMPEngineer):
-    """Agent mode through the configured OMP CLI, using the shared auto prompts."""
+    """Agent mode through OMP, using its native Eval browser in auto mode."""
 
     def __init__(
         self,
@@ -63,17 +64,62 @@ class OMPAutoEngineer(OMPEngineer):
         self.headless = headless
 
     def _get_active_prompts(self) -> tuple[str, str]:
-        return ClaudeAutoEngineer._build_auto_prompts(self)
+        system_prompt, user_message = ClaudeAutoEngineer._build_auto_prompts(self)
+        if self.agent_provider == "auto":
+            from .prompts import load
+
+            system_prompt = system_prompt.replace("**MCP.**", "**OMP Eval browser facade.**")
+            user_message = load(
+                "auto/user_omp_browser",
+                prompt=self.prompt,
+                scripts_dir=str(self.scripts_dir),
+                har_path=str(self.har_path),
+                har_path_json=json.dumps(str(self.har_path)),
+                run_id=self.run_id,
+                headed_option="headed: false," if self.headless else "",
+            )
+        return system_prompt, user_message
 
     async def analyze_and_generate(self) -> dict[str, Any] | None:
         self.ui.header(self.run_id, self.prompt, self.omp_model or "OMP configured model", self.sdk, mode="agent")
         self.ui.start_analysis()
+        if self.agent_provider == "agent-browser":
+            ab_setup = ensure_agent_browser_runtime()
+            print_agent_browser_setup_notices(self.ui.console, ab_setup)
+            if not ab_setup.ok:
+                error = ab_setup.error or "agent-browser setup failed"
+                self.ui.error(error)
+                self.message_store.save_error(error)
+                return None
+
         system_prompt, user_message = self._get_active_prompts()
+        if self.agent_provider != "auto":
+            system_prompt += (
+                "\n\nUse only the browser integration specified above. Do not use OMP's "
+                "built-in browser or browser relay; they are not attached to this run."
+            )
         self.message_store.save_prompt(user_message)
-        if not await self._run_omp(system_prompt, user_message):
+        mcp_servers = None
+        if self.agent_provider not in ("agent-browser", "auto"):
+            server_name, server_config = ClaudeAutoEngineer._get_mcp_config(self)
+            if server_config.get("command") == "npx":
+                server_config = {**server_config, "args": ["-y", *server_config["args"]]}
+            mcp_servers = {server_name: server_config}
+        if not await self._run_omp(system_prompt, user_message, mcp_servers=mcp_servers):
+            return None
+        if self.agent_provider != "chrome-mcp" and not extract_domain_from_har(self.har_path):
+            error = "Browser capture did not contain a valid request; OMP agent result was not accepted."
+            self.ui.error(error)
+            self.message_store.save_error(error)
             return None
 
-        script_path = str(self.scripts_dir / self._get_client_filename())
+        script_file = self.scripts_dir / self._get_client_filename()
+        if not script_file.is_file():
+            error = "OMP agent did not generate the expected client file."
+            self.ui.error(error)
+            self.message_store.save_error(error)
+            return None
+        script_path = str(script_file)
         result = {"script_path": script_path, "usage": self.usage_metadata}
         self.ui.success(script_path, str(self.local_scripts_dir / self._get_client_filename()) if self.local_scripts_dir else None)
         self.message_store.save_result(result)

@@ -115,12 +115,12 @@ so WebFetch/WebSearch and configured tools match your desktop setup.
 
 ## Oh My Pi
 
-Runs the locally installed `omp` CLI and inherits its configured provider,
-model, tools, extensions, environment, and tool-approval policy. RAE does not
-require Claude authentication or pass credential values as command-line
-arguments; OMP resolves credentials through its own configuration and
-environment. Install and authenticate OMP using its own setup, then select
-`omp` in `/settings`.
+Runs the locally installed `omp` CLI. OMP resolves provider and credentials
+through its own configuration and environment. In agent mode, OMP also loads
+project settings from its session working directory; see the working-directory
+scope below. RAE does not require Claude authentication or pass credential
+values as command-line arguments. Install and authenticate OMP using its own
+setup, then select `omp` in `/settings`.
 
 ```json
 {
@@ -133,10 +133,24 @@ An empty `omp_model` leaves model selection to OMP's existing configuration.
 Set it to a model identifier to override that selection for RAE runs.
 The `omp` executable must be available in `PATH`.
 
-RAE preserves OMP's configured approval mode. With `yolo`, OMP can execute tools
-without confirmation while processing page content or HAR data. Use that mode
-only for trusted targets; approval-required tools may not run in non-interactive
-sessions.
+In agent mode, OMP's `auto` provider uses OMP's built-in JavaScript `eval`
+browser facade and writes its HAR directly to the RAE run path. It opens a new
+tab with `app.relay: false` and `app.tern: false`, without changing OMP's
+project or global settings. OMP's configured CDP endpoint or an available cmux
+browser can still take precedence over managed Chromium. Explicit `chrome-mcp`
+uses its temporary MCP configuration and temporary working directory; it does
+not load the caller project's `.omp/config.yml`. `agent-browser` uses its CLI.
+Agent-mode OMP runs without MCP use the RAE output root as OMP's working
+directory, not necessarily the directory from which RAE was invoked. OMP
+therefore discovers project settings from the RAE output root; caller-project
+settings apply only when that is the same directory. RAE does not copy project
+settings or mutate OMP configuration.
+
+OMP browser operations follow the approval policy effective in that OMP
+session. RAE does not override approval settings. Project-scoped approval
+settings in the caller's directory are not loaded unless the RAE output root
+is that directory; global OMP policy remains applicable. Approval-required
+tools may not run in non-interactive sessions.
 
 ## Switching SDKs
 

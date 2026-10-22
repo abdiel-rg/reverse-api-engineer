@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Oh My Pi (OMP) CLI-backed SDK selection for API client generation. Reuses OMP's configured provider and credentials, with an optional `omp_model` override.
+- Oh My Pi (OMP) CLI-backed SDK selection for API client generation. OMP resolves provider and credentials from its own configuration and environment, with an optional `omp_model` override. OMP auto mode uses OMP's JavaScript Eval browser facade; explicit MCP runs use a temporary working directory with the RAE output root added as workspace access.
+
+### Fixed
+- OMP auto browser capture now uses OMP's native Eval browser facade, disables relay and Tern for its fresh tab, gives browser open a 120-second deadline, and records HAR directly to the RAE run path. The auto run's OMP working directory is the RAE output root, not necessarily the caller's project; explicit MCP runs use a temporary working directory. Neither path loads caller-project settings unless that directory is the OMP working directory. RAE does not copy project settings or override OMP approval policy.
 
 ## [0.14.0] - 2026-09-23
 
