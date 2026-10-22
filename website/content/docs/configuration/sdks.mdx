@@ -133,6 +133,11 @@ An empty `omp_model` leaves model selection to OMP's existing configuration.
 Set it to a model identifier to override that selection for RAE runs.
 The `omp` executable must be available in `PATH`.
 
+RAE preserves OMP's configured approval mode. With `yolo`, OMP can execute tools
+without confirmation while processing page content or HAR data. Use that mode
+only for trusted targets; approval-required tools may not run in non-interactive
+sessions.
+
 ## Switching SDKs
 
 In the CLI:
