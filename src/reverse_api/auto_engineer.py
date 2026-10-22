@@ -46,7 +46,7 @@ def _resolve_requested_url(url: str | None, prompt: str) -> str | None:
         requested_url = url.strip()
     else:
         mission_urls = {
-            match.group(0).rstrip(".,;:!?)]}")
+            match.group(0).rstrip(".,;:!?]")
             for match in _HTTP_URL_RE.finditer(prompt)
         }
         if len(mission_urls) != 1:
@@ -126,11 +126,20 @@ class OMPAutoEngineer(OMPEngineer):
             user_message = load(
                 "auto/user_omp_browser",
                 prompt=self.prompt,
-                requested_url=self.url or "<URL from the mission>",
+                requested_start_url_block=(
+                    f"<requested_start_url>\n{self.url}\n</requested_start_url>"
+                    if self.url
+                    else ""
+                ),
+                starting_url_instruction=(
+                    f"Use the supplied starting URL exactly: {self.url}."
+                    if self.url
+                    else "No starting URL was resolved; derive the target directly from the mission."
+                ),
                 scripts_dir=str(self.scripts_dir),
                 har_path=str(self.har_path),
                 har_path_json=json.dumps(str(self.har_path)),
-                requested_url_json=json.dumps(self.url or "<URL from the mission>"),
+                requested_url_json=json.dumps(self.url) if self.url else "/* derive URL from the mission */",
                 run_id=self.run_id,
                 headed_option=f"headed: {str(not self.headless).lower()},",
             )

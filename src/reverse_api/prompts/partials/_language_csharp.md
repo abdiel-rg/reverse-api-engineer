@@ -15,6 +15,7 @@
 
 **Testing:**
 - Run: `{run_command}`
+- If required secrets are unavailable, report the missing configuration rather than hardcoding credentials. Use placeholders or user-provided environment/runtime values when testing, and document any values the user must supply; fail clearly at startup when required values are missing.
 - You have up to 5 attempts to fix issues
 
 Save the program to: `{scripts_dir}/{client_filename}`

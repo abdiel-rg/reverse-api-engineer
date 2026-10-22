@@ -178,6 +178,45 @@ class TestClaudeAutoEngineerPrompt:
         assert "timeout: 120" in user_message
         assert str(engineer.har_path) in user_message
 
+    def test_omp_prompt_derives_mission_target_without_url_placeholder(self, tmp_path):
+        from reverse_api.auto_engineer import OMPAutoEngineer
+
+        engineer = OMPAutoEngineer(
+            run_id="omp-mission-url",
+            prompt="Inspect the API at https://api.example.test/v1",
+            output_dir=str(tmp_path),
+            verbose=False,
+        )
+        _, user_message = engineer._get_active_prompts()
+
+        assert "<requested_start_url>" in user_message
+        assert "https://api.example.test/v1" in user_message
+        assert "Use the supplied starting URL exactly: https://api.example.test/v1." in user_message
+        assert "Use the supplied starting URL exactly." not in user_message
+
+    def test_omp_prompt_omits_start_url_block_when_unresolved(self, tmp_path):
+        from reverse_api.auto_engineer import OMPAutoEngineer
+
+        engineer = OMPAutoEngineer(
+            run_id="omp-no-url",
+            prompt="Inspect the catalog",
+            output_dir=str(tmp_path),
+            verbose=False,
+        )
+        _, user_message = engineer._get_active_prompts()
+
+        assert "<requested_start_url>" not in user_message
+        assert "<URL from the mission>" not in user_message
+        assert "No starting URL was resolved; derive the target directly from the mission." in user_message
+        assert "Do not follow links or navigate to other hosts unless the mission requires it." in user_message
+
+    def test_omp_url_resolution_preserves_balanced_trailing_parenthesis(self):
+        from reverse_api.auto_engineer import _resolve_requested_url
+
+        url = "https://en.wikipedia.org/wiki/Example_(disambiguation)"
+
+        assert _resolve_requested_url(None, f"Inspect {url}") == url
+
     @pytest.mark.parametrize(
         "output_language",
         ["python", "javascript", "typescript", "go", "java", "csharp", "php", "ruby", "c", "powershell"],

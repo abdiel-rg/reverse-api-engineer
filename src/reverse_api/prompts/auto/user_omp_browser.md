@@ -2,9 +2,7 @@
 {prompt}
 </mission>
 
-<requested_start_url>
-{requested_url}
-</requested_start_url>
+{requested_start_url_block}
 
 <output_directory>
 {scripts_dir}
@@ -14,7 +12,7 @@
 
 Use only OMP's JavaScript `eval` tool and its global `browser` facade for browser capture, honoring OMP's configured browser route. Do not use the RAE Playwright MCP. Open a fresh named tab without an `app` or `app.target` option so OMP selects the browser and no existing tab is adopted. Respect OMP's configured project approval policy; do not attempt to change approval settings or bypass an approval.
 
-Capture traffic into this exact HAR file: `{har_path}`. Use the supplied starting URL exactly. If no starting URL is supplied, derive the target from the mission's named site or service; replace the `tab.goto` placeholder with that concrete HTTP(S) URL. Do not choose an unrelated host or invent a target. If the mission does not identify a safe target clearly, stop and report the blocker. Complete the requested mission interactions while recording; do not stop HAR immediately after the initial page load unless that fulfills the mission. If the requested action requires credentials or approval that are unavailable, stop and report the exact blocker.
+Capture traffic into this exact HAR file: `{har_path}`. {starting_url_instruction} If no starting URL is supplied, derive the target from the mission's named site or service; replace the `tab.goto` placeholder with that concrete HTTP(S) URL. Do not choose an unrelated host or invent a target. If the mission does not identify a safe target clearly, stop and report the blocker. Complete the requested mission interactions while recording; do not stop HAR immediately after the initial page load unless that fulfills the mission. Do not follow links or navigate to other hosts unless the mission requires it. If the requested action requires credentials or approval that are unavailable, stop and report the exact blocker.
 
 Use `content: "text"` to retain textual response bodies needed to infer API schemas; do not capture binary bodies. Text responses may contain private or sensitive data, so treat the local HAR as sensitive. Do not echo response data or copy credentials, cookies, tokens, session data, or personal data into generated files, logs, or summaries.
 

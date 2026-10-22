@@ -18,6 +18,7 @@
 - If `package.json` was generated, first run: `npm install`
 - Run with: `{run_command}`
 - You have up to 5 attempts to fix issues
+- If required secrets are unavailable, report the missing configuration rather than hardcoding credentials. Use placeholders or user-provided environment/runtime values when testing, and document any values the user must supply.
 
 Save the module to: `{scripts_dir}/{client_filename}`
 Save documentation to: `{scripts_dir}/README.md`

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - OMP auto browser capture uses OMP's native Eval browser facade, opens a fresh named tab without an `app` or `app.target` override so OMP chooses its configured browser route, gives browser open a 120-second deadline, and records HAR directly to the RAE run path. A configured CDP endpoint or available cmux browser may take precedence over managed Chromium. The auto run's OMP working directory is the RAE output root, not necessarily the caller's project; caller-project settings and project-scoped approvals apply only when that is the OMP working directory. RAE does not copy project settings or override OMP approval policy.
 - OMP auto-agent dry-run no longer requires Node.js or `npx` for its native Eval browser.
+- OMP auto capture keeps prompt URLs intact when they end with balanced parentheses, includes the resolved start URL only when available, and restricts other-host navigation unless the mission requires it.
+- Generated JavaScript and C# client testing uses only documented runtime credentials; missing secrets are reported rather than hardcoded. Ruby cookie guidance distinguishes response-set cookies from captured HAR values.
+
 
 ## [0.14.0] - 2026-09-23
 

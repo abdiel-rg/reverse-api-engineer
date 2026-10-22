@@ -8,7 +8,7 @@
 **Authentication & credentials:**
 - Never put credentials, cookies, tokens, session IDs, or auth headers from captured traffic into source, examples, logs, or summaries.
 - Read required secrets from environment variables or explicit runtime parameters and document the required setup; do not claim zero-configuration execution.
-- If the API uses cookies, maintain each `Set-Cookie` value by name, domain, path, secure, `Expires`, and `Max-Age`; remove expired/deleted cookies and send only origin/path-matching cookies. Populate this jar only from runtime-provided values, never captured HAR values.
+- If cookies are needed, store cookies set by the script's own responses and send them according to cookie scope/expiry rules; accept initial cookie values only through runtime inputs. Never copy captured HAR cookie values.
 - Build Bearer/API-key headers from runtime-provided values, never recorded values.
 - Implement refresh flows only when they use user-managed runtime credentials; never replay secrets extracted from traffic.
 
