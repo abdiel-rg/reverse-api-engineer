@@ -4,7 +4,7 @@ description: Choose the SDK backend for code generation.
 ---
 
 Reverse API Engineer can drive code generation through Claude, OpenCode,
-Copilot, or Cursor.
+Copilot, Cursor, or Oh My Pi (OMP).
 
 ## Claude (default)
 
@@ -112,6 +112,26 @@ so WebFetch/WebSearch and configured tools match your desktop setup.
   "cursor_setting_sources": null
 }
 ```
+
+## Oh My Pi
+
+Runs the locally installed `omp` CLI and inherits its configured provider,
+model, tools, extensions, environment, and tool-approval policy. RAE does not
+require Claude authentication or pass credential values as command-line
+arguments; OMP resolves credentials through its own configuration and
+environment. Install and authenticate OMP using its own setup, then select
+`omp` in `/settings`.
+
+```json
+{
+  "sdk": "omp",
+  "omp_model": ""
+}
+```
+
+An empty `omp_model` leaves model selection to OMP's existing configuration.
+Set it to a model identifier to override that selection for RAE runs.
+The `omp` executable must be available in `PATH`.
 
 ## Switching SDKs
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Oh My Pi (OMP) CLI-backed SDK selection for API client generation. Reuses OMP's configured provider and credentials, with an optional `omp_model` override.
+
 ## [0.14.0] - 2026-09-23
 
 ### Security

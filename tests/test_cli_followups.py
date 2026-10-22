@@ -7,6 +7,7 @@ Covers:
 
 import json
 import os
+import shutil
 import subprocess
 from unittest.mock import patch
 
@@ -385,6 +386,33 @@ class TestAgentDryRun:
         assert "agent_provider" in check_names
         assert "node" in check_names
         assert "output_dir" in check_names
+
+
+    def test_omp_dry_run_uses_omp_model_without_claude_auth(self, tmp_path):
+        from reverse_api.cli import agent as agent_cmd
+
+        runner = CliRunner()
+        real_which = shutil.which
+        with (
+            patch("reverse_api.cli.config_manager") as cm,
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False),
+            patch("shutil.which", side_effect=lambda name: "/opt/omp" if name == "omp" else real_which(name)),
+        ):
+            cm.get.side_effect = lambda key, default=None: {
+                "agent_provider": "auto",
+                "sdk": "omp",
+                "omp_model": "openai/gpt-5.2",
+                "output_dir": str(tmp_path),
+            }.get(key, default)
+            result = runner.invoke(agent_cmd, ["--dry-run", "-p", "fetch public docs", "-u", "https://example.com"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout.strip())
+        assert payload["would_run"]["sdk"] == "omp"
+        assert payload["would_run"]["model"] == "openai/gpt-5.2"
+        sdk_check = next(check for check in payload["checks"] if check["name"] == "sdk:omp")
+        assert sdk_check["status"] == "ok"
+        assert "ANTHROPIC_API_KEY" not in sdk_check["message"]
 
     def test_dry_run_missing_prompt_is_misuse(self, tmp_path):
         """Missing --prompt → error_kind=misuse, exit 1, no browser launched."""

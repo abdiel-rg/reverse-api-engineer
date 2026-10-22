@@ -439,6 +439,25 @@ def run_reverse_engineering(
             copilot_model=copilot_model,
             interactive=interactive,
         )
+    elif sdk == "omp":
+        from .omp_engineer import OMPEngineer
+
+        engineer = OMPEngineer(
+            run_id=run_id,
+            har_path=har_path,
+            prompt=prompt,
+            model=model,
+            additional_instructions=additional_instructions,
+            output_dir=output_dir,
+            verbose=verbose,
+            enable_sync=enable_sync,
+            sdk=sdk,
+            is_fresh=is_fresh,
+            output_language=output_language,
+            output_mode=output_mode,
+            interactive=interactive,
+            omp_model=model,
+        )
     else:
         engineer = ClaudeEngineer(
             run_id=run_id,

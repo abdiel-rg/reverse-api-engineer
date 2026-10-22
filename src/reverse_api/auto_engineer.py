@@ -31,8 +31,54 @@ from .agent_browser import (
     print_agent_browser_setup_notices,
 )
 from .engineer import ClaudeEngineer
+from .omp_engineer import OMPEngineer
 from .opencode_engineer import OpenCodeEngineer, debug_log, format_error
 from .utils import build_sdk_env, get_har_dir
+
+
+class OMPAutoEngineer(OMPEngineer):
+    """Agent mode through the configured OMP CLI, using the shared auto prompts."""
+
+    def __init__(
+        self,
+        run_id: str,
+        prompt: str,
+        omp_model: str | None = None,
+        output_dir: str | None = None,
+        agent_provider: str = "auto",
+        **kwargs: Any,
+    ) -> None:
+        headless = kwargs.pop("headless", False)
+        har_path = get_har_dir(run_id, output_dir) / "recording.har"
+        super().__init__(
+            run_id=run_id,
+            har_path=har_path,
+            prompt=prompt,
+            omp_model=omp_model,
+            output_dir=output_dir,
+            **kwargs,
+        )
+        self.mcp_run_id = run_id
+        self.agent_provider = agent_provider
+        self.headless = headless
+
+    def _get_active_prompts(self) -> tuple[str, str]:
+        return ClaudeAutoEngineer._build_auto_prompts(self)
+
+    async def analyze_and_generate(self) -> dict[str, Any] | None:
+        self.ui.header(self.run_id, self.prompt, self.omp_model or "OMP configured model", self.sdk, mode="agent")
+        self.ui.start_analysis()
+        system_prompt, user_message = self._get_active_prompts()
+        self.message_store.save_prompt(user_message)
+        if not await self._run_omp(system_prompt, user_message):
+            return None
+
+        script_path = str(self.scripts_dir / self._get_client_filename())
+        result = {"script_path": script_path, "usage": self.usage_metadata}
+        self.ui.success(script_path, str(self.local_scripts_dir / self._get_client_filename()) if self.local_scripts_dir else None)
+        self.message_store.save_result(result)
+        return result
+
 
 # Suppress claude_agent_sdk logs
 logging.getLogger("claude_agent_sdk").setLevel(logging.WARNING)
