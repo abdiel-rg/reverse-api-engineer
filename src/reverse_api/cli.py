@@ -479,9 +479,12 @@ def _build_dry_run_payload(
     else:
         checks.append({"name": f"sdk:{sdk}", "status": "ok", "message": f"{sdk_env_var} present"})
 
-    # 5. Node.js + npx — MCP providers need both; agent-browser with a global binary does not.
+    # OMP auto uses its native Eval browser rather than an npx-launched MCP server.
     node = shutil.which("node")
-    needs_node_for_browser = agent_provider != "agent-browser" or global_agent_browser is None
+    uses_omp_eval_browser = sdk == "omp" and agent_provider == "auto"
+    needs_node_for_browser = not uses_omp_eval_browser and (
+        agent_provider != "agent-browser" or global_agent_browser is None
+    )
     if node is None:
         if needs_node_for_browser:
             checks.append({
@@ -491,11 +494,12 @@ def _build_dry_run_payload(
                 "(MCP browser servers plus Vercel agent-browser install/bootstrap)",
             })
         else:
-            checks.append({
-                "name": "node",
-                "status": "ok",
-                "message": "not on PATH (optional while global `agent-browser` is installed)",
-            })
+            message = (
+                "not required for OMP's native Eval browser"
+                if uses_omp_eval_browser
+                else "not on PATH (optional while global `agent-browser` is installed)"
+            )
+            checks.append({"name": "node", "status": "ok", "message": message})
     else:
         try:
             ver = subprocess.run(
@@ -506,8 +510,9 @@ def _build_dry_run_payload(
             checks.append({"name": "node", "status": "warn", "message": f"could not query version: {e}"})
 
     npx = shutil.which("npx")
-    needs_npx_for_browser = agent_provider in ("auto", "chrome-mcp") or (
-        agent_provider == "agent-browser" and global_agent_browser is None
+    needs_npx_for_browser = not uses_omp_eval_browser and (
+        agent_provider in ("auto", "chrome-mcp")
+        or (agent_provider == "agent-browser" and global_agent_browser is None)
     )
     if npx is None:
         if needs_npx_for_browser:
@@ -518,11 +523,12 @@ def _build_dry_run_payload(
                 "fetch/run the pinned agent-browser CLI when no global binary is present",
             })
         else:
-            checks.append({
-                "name": "npx",
-                "status": "ok",
-                "message": "not on PATH (optional while global `agent-browser` is installed)",
-            })
+            message = (
+                "not required for OMP's native Eval browser"
+                if uses_omp_eval_browser
+                else "not on PATH (optional while global `agent-browser` is installed)"
+            )
+            checks.append({"name": "npx", "status": "ok", "message": message})
     else:
         checks.append({"name": "npx", "status": "ok", "message": npx})
 

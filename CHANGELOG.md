@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - OMP auto browser capture now uses OMP's native Eval browser facade, disables relay and Tern for its fresh tab, gives browser open a 120-second deadline, and records HAR directly to the RAE run path. The auto run's OMP working directory is the RAE output root, not necessarily the caller's project; explicit MCP runs use a temporary working directory. Neither path loads caller-project settings unless that directory is the OMP working directory. RAE does not copy project settings or override OMP approval policy.
+- OMP auto-agent dry-run no longer requires Node.js or `npx` for its native Eval browser.
 
 ## [0.14.0] - 2026-09-23
 

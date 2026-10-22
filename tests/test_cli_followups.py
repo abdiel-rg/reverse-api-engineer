@@ -414,6 +414,33 @@ class TestAgentDryRun:
         assert sdk_check["status"] == "ok"
         assert "ANTHROPIC_API_KEY" not in sdk_check["message"]
 
+
+    def test_omp_auto_dry_run_does_not_require_node_or_npx(self, tmp_path):
+        from reverse_api.cli import agent as agent_cmd
+
+        runner = CliRunner()
+        with (
+            patch("reverse_api.cli.config_manager") as cm,
+            patch("shutil.which", side_effect=lambda name: "/opt/omp" if name == "omp" else None),
+        ):
+            cm.get.side_effect = lambda key, default=None: {
+                "agent_provider": "auto",
+                "sdk": "omp",
+                "output_dir": str(tmp_path),
+            }.get(key, default)
+            result = runner.invoke(
+                agent_cmd,
+                ["--dry-run", "-p", "fetch public docs", "-u", "https://example.com"],
+            )
+
+        payload = json.loads(result.stdout.strip())
+        assert result.exit_code == 0, result.output
+        assert payload["status"] == "ok"
+        assert all(
+            check["status"] != "error"
+            for check in payload["checks"]
+            if check["name"] in ("node", "npx")
+        )
     def test_dry_run_missing_prompt_is_misuse(self, tmp_path):
         """Missing --prompt → error_kind=misuse, exit 1, no browser launched."""
         from reverse_api.cli import agent as agent_cmd
