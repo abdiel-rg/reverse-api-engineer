@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Oh My Pi (OMP) CLI-backed SDK selection for API client generation. OMP resolves provider and credentials from its own configuration and environment, with an optional `omp_model` override. OMP auto mode uses OMP's JavaScript Eval browser facade; explicit MCP runs use a temporary working directory with the RAE output root added as workspace access.
 
 ### Fixed
-- OMP auto browser capture now uses OMP's native Eval browser facade, disables relay and Tern for its fresh tab, gives browser open a 120-second deadline, and records HAR directly to the RAE run path. The auto run's OMP working directory is the RAE output root, not necessarily the caller's project; explicit MCP runs use a temporary working directory. Neither path loads caller-project settings unless that directory is the OMP working directory. RAE does not copy project settings or override OMP approval policy.
+- OMP auto browser capture uses OMP's native Eval browser facade, opens a fresh named tab without an `app` or `app.target` override so OMP chooses its configured browser route, gives browser open a 120-second deadline, and records HAR directly to the RAE run path. A configured CDP endpoint or available cmux browser may take precedence over managed Chromium. The auto run's OMP working directory is the RAE output root, not necessarily the caller's project; caller-project settings and project-scoped approvals apply only when that is the OMP working directory. RAE does not copy project settings or override OMP approval policy.
 - OMP auto-agent dry-run no longer requires Node.js or `npx` for its native Eval browser.
 
 ## [0.14.0] - 2026-09-23

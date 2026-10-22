@@ -1077,11 +1077,13 @@ def repl_loop() -> None:
     update_executor = ThreadPoolExecutor(max_workers=1)
     update_future = update_executor.submit(check_for_updates)
 
-    # Get current SDK and model from config
+    # Get current SDK and model from config.
     sdk = config_manager.get("sdk", "claude")
     model = default_model_for_configured_sdk(sdk)
-
-    display_banner(console, sdk=sdk, model=model)
+    # OMP chooses its model from its own config unless explicitly overridden;
+    # show the active SDK even when that leaves no concrete model to display.
+    banner_model = model or ("OMP configured model" if sdk == "omp" else model)
+    display_banner(console, sdk=sdk, model=banner_model)
     console.print("  [dim]shift+tab to cycle modes | ctrl+r for random task (agent)[/dim]")
     display_footer(console)
 
@@ -1580,7 +1582,7 @@ def handle_history(mode_color: str = THEME_PRIMARY) -> None:
         console.print()
 
         if questionary.confirm(" > recode?", qmark="").ask():
-            model = run.get("model") or config_manager.get("claude_code_model", "claude-sonnet-4-6")
+            model = run.get("model") or default_model_for_configured_sdk()
             run_engineer(run_id, model=model)
     else:
         console.print(" [dim]> not found[/dim]")
@@ -2186,6 +2188,7 @@ def run_auto_capture(
                 omp_model=model if model else None,
                 output_dir=output_dir,
                 agent_provider=agent_provider,
+                url=url,
                 enable_sync=config_manager.get("real_time_sync", False),
                 sdk=sdk,
                 output_language=output_language,

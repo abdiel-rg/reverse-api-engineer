@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .base_engineer import BaseEngineer
+from .runtime_commands import resolve_windows_command
 
 
 class OMPEngineer(BaseEngineer):
@@ -18,6 +19,10 @@ class OMPEngineer(BaseEngineer):
     def __init__(self, *args: Any, omp_model: str | None = None, **kwargs: Any) -> None:
         kwargs.setdefault("sdk", "omp")
         super().__init__(*args, **kwargs)
+        self.har_path = Path(self.har_path).resolve()
+        self.scripts_dir = self.scripts_dir.resolve()
+        if self.existing_client_path is not None:
+            self.existing_client_path = self.existing_client_path.resolve()
         self.omp_model = omp_model.strip() if isinstance(omp_model, str) else ""
 
     async def _run_omp(
@@ -33,6 +38,7 @@ class OMPEngineer(BaseEngineer):
 
         temp_workspace = tempfile.TemporaryDirectory(prefix="rae-omp-") if mcp_servers else None
         workspace = temp_workspace.name if temp_workspace else str(self.scripts_dir.parent.parent)
+        process = None
         try:
             if mcp_servers:
                 mcp_config = Path(workspace) / ".omp" / "mcp.json"
@@ -51,8 +57,8 @@ class OMPEngineer(BaseEngineer):
             if self.omp_model:
                 args.extend(["--model", self.omp_model])
             args.append(user_message)
+            args = resolve_windows_command(args)
 
-            process = None
             process = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=workspace,
@@ -60,6 +66,14 @@ class OMPEngineer(BaseEngineer):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
+        except asyncio.CancelledError:
+            if process is not None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            raise
         except TimeoutError:
             if process is not None:
                 process.kill()
@@ -67,7 +81,7 @@ class OMPEngineer(BaseEngineer):
             self.ui.error("OMP session timed out after 10 minutes")
             self.message_store.save_error("OMP session timed out")
             return False
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             error_message = str(exc)
             self.ui.error(f"Could not start OMP: {error_message}")
             self.message_store.save_error(error_message)
@@ -95,7 +109,14 @@ class OMPEngineer(BaseEngineer):
         if not await self._run_omp(system_prompt, user_message):
             return None
 
-        script_path = str(self.scripts_dir / self._get_client_filename())
+        script_file = self.scripts_dir / self._get_client_filename()
+        if not script_file.is_file():
+            error_message = f"OMP exited successfully but generated client file was not found: {script_file}"
+            self.ui.error(error_message)
+            self.message_store.save_error(error_message)
+            return None
+
+        script_path = str(script_file)
         result = {"script_path": script_path, "usage": self.usage_metadata}
         self.ui.success(script_path, str(self.local_scripts_dir / self._get_client_filename()) if self.local_scripts_dir else None)
         self.message_store.save_result(result)

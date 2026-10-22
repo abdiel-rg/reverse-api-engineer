@@ -366,7 +366,7 @@ def run_reverse_engineering(
     """Run reverse engineering with the specified SDK.
 
     Args:
-        sdk: "claude", "opencode", "copilot", or "cursor" - determines which SDK to use
+        sdk: "claude", "opencode", "copilot", "cursor", or "omp" - determines which SDK to use
         opencode_provider: Provider ID for OpenCode (e.g., "anthropic")
         opencode_model: Model ID for OpenCode (e.g., "claude-sonnet-4-6")
         copilot_model: Model ID for Copilot (e.g., "gpt-5")

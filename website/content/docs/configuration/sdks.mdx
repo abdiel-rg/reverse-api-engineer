@@ -134,22 +134,25 @@ Set it to a model identifier to override that selection for RAE runs.
 The `omp` executable must be available in `PATH`.
 
 In agent mode, OMP's `auto` provider uses OMP's built-in JavaScript `eval`
-browser facade and writes its HAR directly to the RAE run path. It opens a new
-tab with `app.relay: false` and `app.tern: false`, without changing OMP's
-project or global settings. OMP's configured CDP endpoint or an available cmux
-browser can still take precedence over managed Chromium. Explicit `chrome-mcp`
-uses its temporary MCP configuration and temporary working directory; it does
-not load the caller project's `.omp/config.yml`. `agent-browser` uses its CLI.
+browser facade and writes its HAR directly to the RAE run path. It opens a fresh
+named tab without an `app` or `app.target` override, so OMP selects its
+configured browser route; a configured CDP endpoint or available cmux browser
+may take precedence over managed Chromium. This does not change OMP project or
+global settings.
+
 Agent-mode OMP runs without MCP use the RAE output root as OMP's working
 directory, not necessarily the directory from which RAE was invoked. OMP
-therefore discovers project settings from the RAE output root; caller-project
-settings apply only when that is the same directory. RAE does not copy project
-settings or mutate OMP configuration.
+discovers project settings from its working directory, so caller-project
+settings apply only when that is the same directory. `chrome-mcp` runs use a
+temporary working directory and temporary MCP configuration; RAE adds the
+output root with `--add-dir` for workspace access only, not as OMP's working
+directory or project-config source. Such runs do not load the caller project's
+`.omp/config.yml`. RAE does not copy project settings or mutate OMP configuration.
 
 OMP browser operations follow the approval policy effective in that OMP
 session. RAE does not override approval settings. Project-scoped approval
-settings in the caller's directory are not loaded unless the RAE output root
-is that directory; global OMP policy remains applicable. Approval-required
+settings from the caller's directory are not loaded unless it is the active
+OMP working directory; global OMP policy remains applicable. Approval-required
 tools may not run in non-interactive sessions.
 
 ## Switching SDKs

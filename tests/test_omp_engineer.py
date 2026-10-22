@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -55,7 +56,8 @@ async def test_omp_agent_registers_browser_mcp_and_cleans_temporary_workspace(
     workspace = Path(captured["kwargs"]["cwd"])
     assert captured["config_text"] == json.dumps({"mcpServers": {"playwright": browser_config}})
     assert args[args.index("--add-dir") + 1] == str(engineer.scripts_dir.parent.parent)
-    assert captured["kwargs"]["cwd"] == str(workspace)
+    assert args[args.index("--cwd") + 1] == str(workspace)
+    assert workspace != output_dir
     assert not workspace.exists()
 
 
@@ -86,7 +88,8 @@ async def test_omp_auto_uses_native_browser_and_rejects_success_without_capture(
     assert await engineer.analyze_and_generate() is None
     assert captured["mcp_servers"] is None
     assert "OMP Eval browser facade" in captured["system_prompt"]
-    assert "app: { relay: false, tern: false }" in captured["user_message"]
+    assert "without an `app` or `app.target` option" in captured["user_message"]
+    assert "app: { relay: false, tern: false }" not in captured["user_message"]
     assert "timeout: 120" in captured["user_message"]
     assert "tab.harStart" in captured["user_message"]
     assert "tab.harStop" in captured["user_message"]
@@ -112,17 +115,19 @@ async def test_omp_auto_accepts_only_valid_capture_except_chrome(
 ) -> None:
     engineer = OMPAutoEngineer(
         run_id="run-4",
-        prompt="Inspect the site",
+        prompt="Inspect https://example.com",
         output_dir=str(tmp_path / "output"),
         agent_provider=agent_provider,
         verbose=False,
     )
+    captured: dict[str, Any] = {}
 
     async def fake_run_omp(
         system_prompt: str,
         user_message: str,
         mcp_servers: dict[str, dict[str, Any]] | None = None,
     ) -> bool:
+        captured["mcp_servers"] = mcp_servers
         script = engineer.scripts_dir / "api_client.py"
         script.write_text("print('ok')", encoding="utf-8")
         if har_content is not None:
@@ -135,6 +140,21 @@ async def test_omp_auto_accepts_only_valid_capture_except_chrome(
     result = await engineer.analyze_and_generate()
 
     assert (result is not None) is accepted
+    if agent_provider == "chrome-mcp":
+        assert captured["mcp_servers"] == {
+            "chrome-devtools": {
+                "type": "stdio",
+                "command": "npx",
+                "args": [
+                    "-y",
+                    "chrome-devtools-mcp@latest",
+                    "--no-usage-statistics",
+                    "--autoConnect",
+                ],
+            },
+        }
+    else:
+        assert captured["mcp_servers"] is None
 
 
 def test_omp_engineer_without_mcp_uses_output_workspace_without_add_dir(
@@ -172,3 +192,195 @@ def test_omp_engineer_without_mcp_uses_output_workspace_without_add_dir(
     assert args[args.index("--cwd") + 1] == str(output_workspace)
     assert captured["kwargs"]["cwd"] == str(output_workspace)
     assert "--add-dir" not in args
+
+
+@pytest.mark.asyncio
+async def test_omp_cancellation_reaps_process_before_cleaning_mcp_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    engineer = OMPEngineer(
+        run_id="cancelled",
+        har_path=tmp_path / "recording.har",
+        prompt="Inspect the site",
+        output_dir=str(tmp_path / "output"),
+        verbose=False,
+    )
+    events: list[str] = []
+    started = asyncio.Event()
+    process: Any
+
+    class FakeProcess:
+        returncode: int | None = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            started.set()
+            await asyncio.Event().wait()
+            return b"", b""
+
+        def kill(self) -> None:
+            events.append("kill")
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            events.append("wait")
+            return -9
+
+    process = FakeProcess()  # type: ignore[assignment]
+    real_temporary_directory = tempfile.TemporaryDirectory
+
+    class TrackedTemporaryDirectory:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.directory = real_temporary_directory(*args, **kwargs)
+            self.name = self.directory.name
+
+        def cleanup(self) -> None:
+            events.append("cleanup")
+            self.directory.cleanup()
+
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.tempfile.TemporaryDirectory", TrackedTemporaryDirectory
+    )
+    monkeypatch.setattr("reverse_api.omp_engineer.shutil.which", lambda _: "/usr/bin/omp")
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.asyncio.create_subprocess_exec",
+        lambda *args, **kwargs: asyncio.sleep(0, result=process),
+    )
+
+    task = asyncio.create_task(engineer._run_omp("system", "user", {"playwright": {}}))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert events == ["kill", "wait", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_omp_engineer_does_not_report_success_without_client_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    engineer = OMPEngineer(
+        run_id="missing-client",
+        har_path=tmp_path / "recording.har",
+        prompt="Inspect the site",
+        output_dir=str(tmp_path / "output"),
+        verbose=False,
+    )
+
+    async def successful_omp_run(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(engineer, "_run_omp", successful_omp_run)
+
+    assert await engineer.analyze_and_generate() is None
+
+
+@pytest.mark.asyncio
+async def test_omp_resolves_relative_har_and_output_paths_for_temp_mcp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    monkeypatch.chdir(tmp_path)
+    engineer = OMPEngineer(
+        run_id="relative",
+        har_path=Path("relative-output/har/relative/recording.har"),
+        prompt="Inspect the site",
+        output_dir="relative-output",
+        verbose=False,
+    )
+    _, user_message = engineer._build_prompts()
+    assert str(engineer.har_path) in user_message
+    assert str(engineer.scripts_dir) in user_message
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr("reverse_api.omp_engineer.shutil.which", lambda _: "/usr/bin/omp")
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: Any) -> SimpleNamespace:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            communicate=lambda: asyncio.sleep(0, result=(b"", b"")),
+            returncode=0,
+        )
+
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.asyncio.create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    assert await engineer._run_omp("system", "user", {"playwright": {}})
+    args = captured["args"]
+    assert engineer.har_path.is_absolute()
+    assert engineer.scripts_dir.is_absolute()
+    assert Path(args[args.index("--add-dir") + 1]) == engineer.scripts_dir.parent.parent
+    assert Path(args[args.index("--cwd") + 1]).is_absolute()
+
+
+@pytest.mark.asyncio
+async def test_omp_resolves_windows_command_before_subprocess_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    engineer = OMPEngineer(
+        run_id="windows-launch",
+        har_path=tmp_path / "recording.har",
+        prompt="Inspect the site",
+        output_dir=str(tmp_path / "output"),
+        verbose=False,
+    )
+    calls: list[list[str]] = []
+    launch_args: list[str] = []
+
+    def resolve_command(args: list[str]) -> list[str]:
+        calls.append(args)
+        return ["resolved-omp", *args[1:]]
+
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.resolve_windows_command", resolve_command, raising=False
+    )
+    monkeypatch.setattr("reverse_api.omp_engineer.shutil.which", lambda _: "/usr/bin/omp")
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: Any) -> SimpleNamespace:
+        launch_args.extend(args)
+        return SimpleNamespace(
+            communicate=lambda: asyncio.sleep(0, result=(b"", b"")),
+            returncode=0,
+        )
+
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.asyncio.create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    assert await engineer._run_omp("system", "user")
+    assert calls and calls[0][0] == "/usr/bin/omp"
+    assert launch_args[0] == "resolved-omp"
+
+
+def test_omp_engineer_prompt_uses_runtime_authentication_inputs(tmp_path: Path) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    engineer = OMPEngineer(
+        run_id="prompt-auth",
+        har_path=tmp_path / "recording.har",
+        prompt="Inspect the site",
+        output_dir=str(tmp_path / "output"),
+        verbose=False,
+    )
+    system_prompt, user_message = engineer._build_prompts()
+    prompt = (system_prompt + user_message).lower()
+
+    assert "never put credentials" in prompt
+    assert "environment variables or explicit runtime parameters" in prompt
+    for unsafe_instruction in (
+        "hardcode all cookies",
+        "hardcode whatever you find",
+        "zero configuration",
+        "automatic re-authentication",
+        "re-fetch them before they expire",
+    ):
+        assert unsafe_instruction not in prompt

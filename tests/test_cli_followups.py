@@ -919,3 +919,86 @@ class TestHeadlessMcpConfig:
         eng = self._make("auto", headless=False, tmp_path=tmp_path)
         _, cfg = eng._get_mcp_config()
         assert "--headless" not in cfg["args"]
+
+
+def test_history_recode_preserves_empty_omp_model(monkeypatch):
+    from reverse_api.cli import handle_history
+
+    run = {
+        "run_id": "omp-run",
+        "prompt": "Inspect the site",
+        "model": "",
+        "usage": {},
+    }
+
+    class PromptAnswer:
+        def __init__(self, answer: str) -> None:
+            self.answer = answer
+
+        def ask(self) -> str:
+            return self.answer
+
+    monkeypatch.setattr(
+        "reverse_api.cli.questionary.select",
+        lambda *args, **kwargs: PromptAnswer("omp-run"),
+    )
+    monkeypatch.setattr(
+        "reverse_api.cli.questionary.confirm",
+        lambda *args, **kwargs: PromptAnswer("yes"),
+    )
+
+    with (
+        patch("reverse_api.cli.session_manager") as session_manager,
+        patch("reverse_api.cli.config_manager") as config_manager,
+        patch("reverse_api.cli.run_engineer") as run_engineer,
+    ):
+        session_manager.get_history.return_value = [run]
+        session_manager.get_run.return_value = run
+        config_manager.get.side_effect = lambda key, default=None: {
+            "sdk": "omp",
+            "omp_model": "",
+            "claude_code_model": "claude-sonnet-4-6",
+        }.get(key, default)
+
+        handle_history()
+
+    run_engineer.assert_called_once_with("omp-run", model="")
+
+
+def test_repl_startup_indicates_omp_with_omp_configured_model(monkeypatch):
+    from reverse_api import cli
+
+    class Future:
+        @staticmethod
+        def result(timeout=None):
+            return None
+
+    class Executor:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def submit(function):
+            return Future()
+
+        @staticmethod
+        def shutdown(wait=False):
+            pass
+
+    banner: dict[str, str] = {}
+    monkeypatch.setattr("concurrent.futures.ThreadPoolExecutor", Executor)
+    monkeypatch.setattr(
+        cli.config_manager,
+        "get",
+        lambda key, default=None: {"sdk": "omp", "omp_model": ""}.get(key, default),
+    )
+    monkeypatch.setattr(
+        cli,
+        "display_banner",
+        lambda console, sdk=None, model=None: banner.update(sdk=sdk, model=model),
+    )
+    monkeypatch.setattr(cli, "prompt_interactive_options", lambda **kwargs: {"command": "/exit"})
+
+    cli.repl_loop()
+
+    assert banner == {"sdk": "omp", "model": "OMP configured model"}

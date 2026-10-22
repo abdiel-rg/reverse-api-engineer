@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from copilot.types import PostToolUseHookInput, PostToolUseHookOutput, PreToolUseHookInput, PreToolUseHookOutput
@@ -36,6 +38,55 @@ from .omp_engineer import OMPEngineer
 from .opencode_engineer import OpenCodeEngineer, debug_log, format_error
 from .utils import build_sdk_env, extract_domain_from_har, get_har_dir
 
+_HTTP_URL_RE = re.compile(r"""https?://[^\s<>"'`]+""", re.IGNORECASE)
+
+
+def _resolve_requested_url(url: str | None, prompt: str) -> str | None:
+    if url and url.strip():
+        requested_url = url.strip()
+    else:
+        mission_urls = {
+            match.group(0).rstrip(".,;:!?)]}")
+            for match in _HTTP_URL_RE.finditer(prompt)
+        }
+        if len(mission_urls) != 1:
+            return None
+        requested_url = mission_urls.pop()
+
+    try:
+        parsed = urlsplit(requested_url)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return None
+    except ValueError:
+        return None
+    return requested_url
+
+
+def _har_contains_requested_host(har_path: Path, requested_url: str) -> bool:
+    try:
+        expected_host = urlsplit(requested_url).hostname
+        entries = json.loads(har_path.read_text(encoding="utf-8-sig")).get("log", {}).get("entries", [])
+    except (OSError, TypeError, ValueError, AttributeError):
+        return False
+
+    if not expected_host or not isinstance(entries, list):
+        return False
+    expected_host = expected_host.lower().rstrip(".")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        request = entry.get("request")
+        request_url = request.get("url") if isinstance(request, dict) else None
+        if not isinstance(request_url, str):
+            continue
+        try:
+            host = urlsplit(request_url).hostname
+        except ValueError:
+            continue
+        if host and host.lower().rstrip(".") == expected_host:
+            return True
+    return False
+
 
 class OMPAutoEngineer(OMPEngineer):
     """Agent mode through OMP, using its native Eval browser in auto mode."""
@@ -47,6 +98,7 @@ class OMPAutoEngineer(OMPEngineer):
         omp_model: str | None = None,
         output_dir: str | None = None,
         agent_provider: str = "auto",
+        url: str | None = None,
         **kwargs: Any,
     ) -> None:
         headless = kwargs.pop("headless", False)
@@ -62,6 +114,8 @@ class OMPAutoEngineer(OMPEngineer):
         self.mcp_run_id = run_id
         self.agent_provider = agent_provider
         self.headless = headless
+        self.has_explicit_url = bool(url and url.strip())
+        self.url = _resolve_requested_url(url, prompt)
 
     def _get_active_prompts(self) -> tuple[str, str]:
         system_prompt, user_message = ClaudeAutoEngineer._build_auto_prompts(self)
@@ -72,17 +126,26 @@ class OMPAutoEngineer(OMPEngineer):
             user_message = load(
                 "auto/user_omp_browser",
                 prompt=self.prompt,
+                requested_url=self.url or "<URL from the mission>",
                 scripts_dir=str(self.scripts_dir),
                 har_path=str(self.har_path),
                 har_path_json=json.dumps(str(self.har_path)),
+                requested_url_json=json.dumps(self.url or "<URL from the mission>"),
                 run_id=self.run_id,
-                headed_option="headed: false," if self.headless else "",
+                headed_option=f"headed: {str(not self.headless).lower()},",
             )
         return system_prompt, user_message
 
     async def analyze_and_generate(self) -> dict[str, Any] | None:
         self.ui.header(self.run_id, self.prompt, self.omp_model or "OMP configured model", self.sdk, mode="agent")
         self.ui.start_analysis()
+
+        if self.agent_provider == "auto" and self.has_explicit_url and self.url is None:
+            error = "OMP auto requires an HTTP(S) target URL via --url."
+            self.ui.error(error)
+            self.message_store.save_error(error)
+            return None
+
         if self.agent_provider == "agent-browser":
             ab_setup = ensure_agent_browser_runtime()
             print_agent_browser_setup_notices(self.ui.console, ab_setup)
@@ -105,25 +168,43 @@ class OMPAutoEngineer(OMPEngineer):
             if server_config.get("command") == "npx":
                 server_config = {**server_config, "args": ["-y", *server_config["args"]]}
             mcp_servers = {server_name: server_config}
-        if not await self._run_omp(system_prompt, user_message, mcp_servers=mcp_servers):
-            return None
-        if self.agent_provider != "chrome-mcp" and not extract_domain_from_har(self.har_path):
-            error = "Browser capture did not contain a valid request; OMP agent result was not accepted."
-            self.ui.error(error)
-            self.message_store.save_error(error)
-            return None
 
-        script_file = self.scripts_dir / self._get_client_filename()
-        if not script_file.is_file():
-            error = "OMP agent did not generate the expected client file."
-            self.ui.error(error)
-            self.message_store.save_error(error)
-            return None
-        script_path = str(script_file)
-        result = {"script_path": script_path, "usage": self.usage_metadata}
-        self.ui.success(script_path, str(self.local_scripts_dir / self._get_client_filename()) if self.local_scripts_dir else None)
-        self.message_store.save_result(result)
-        return result
+        capture_verified = False
+        try:
+            if not await self._run_omp(system_prompt, user_message, mcp_servers=mcp_servers):
+                return None
+            if self.agent_provider == "auto" and self.url is not None:
+                if not _har_contains_requested_host(self.har_path, self.url):
+                    error = "Browser capture HAR did not contain a request to the requested host."
+                    self.ui.error(error)
+                    self.message_store.save_error(error)
+                    return None
+            elif self.agent_provider != "chrome-mcp" and not extract_domain_from_har(self.har_path):
+                error = "Browser capture did not contain a valid request; OMP agent result was not accepted."
+                self.ui.error(error)
+                self.message_store.save_error(error)
+                return None
+
+            script_file = self.scripts_dir / self._get_client_filename()
+            if not script_file.is_file():
+                error = "OMP agent did not generate the expected client file."
+                self.ui.error(error)
+                self.message_store.save_error(error)
+                return None
+            script_path = str(script_file)
+            result = {"script_path": script_path, "usage": self.usage_metadata}
+            self.ui.success(script_path, str(self.local_scripts_dir / self._get_client_filename()) if self.local_scripts_dir else None)
+            self.message_store.save_result(result)
+            capture_verified = True
+            return result
+        finally:
+            if self.agent_provider != "chrome-mcp" and not capture_verified:
+                try:
+                    self.har_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    error = f"Could not remove incomplete browser capture HAR: {exc}"
+                    self.ui.error(error)
+                    self.message_store.save_error(error)
 
 
 # Suppress claude_agent_sdk logs
