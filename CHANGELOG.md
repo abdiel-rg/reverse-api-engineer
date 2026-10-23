@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OMP auto-agent dry-run no longer requires Node.js or `npx` for its native Eval browser.
 - OMP auto capture keeps prompt URLs intact when they end with balanced parentheses, includes the resolved start URL only when available, and restricts other-host navigation unless the mission requires it.
 - Generated JavaScript and C# client testing uses only documented runtime credentials; missing secrets are reported rather than hardcoded. Ruby cookie guidance distinguishes response-set cookies from captured HAR values.
+- OMP auto-capture prompt now uses the supported Eval browser inspection methods (`tab.observe()` and `tab.ariaSnapshot()`) instead of the nonexistent `tab.snapshot()`.
+- OMP auto browser capture restricts navigation and requests to domains derived from a resolved target URL, including the observed LinkedIn static/media CDNs only for LinkedIn targets.
+- OMP auto capture builds a bounded HAR only from already-received successful GET JSON fetch/XHR responses or JSON documents on the requested host and its explicitly allowed subdomains, redacting scalar values, identifier-like path segments, query values, and all headers before writing. It still generates a client from a usable redacted schema when runtime authentication is unavailable, marks authenticated execution unverified, and never reuses browser-session credentials.
 
 
 ## [0.14.0] - 2026-09-23

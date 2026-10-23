@@ -61,17 +61,34 @@ def _resolve_requested_url(url: str | None, prompt: str) -> str | None:
         return None
     return requested_url
 
+def _allowed_domains(url: str) -> list[str]:
+    host = urlsplit(url).hostname
+    if host is None:
+        return []
+    domains = [host]
+    if host.startswith("www."):
+        parent = host[4:]
+        if len(parent.split(".")) >= 2:
+            domains.append(f"*.{parent}")
+            if parent == "linkedin.com":
+                domains.extend(["static.licdn.com", "media.licdn.com"])
+    return domains
+
+
 
 def _har_contains_requested_host(har_path: Path, requested_url: str) -> bool:
     try:
-        expected_host = urlsplit(requested_url).hostname
+        expected_domains = _allowed_domains(requested_url)
         entries = json.loads(har_path.read_text(encoding="utf-8-sig")).get("log", {}).get("entries", [])
     except (OSError, TypeError, ValueError, AttributeError):
         return False
 
-    if not expected_host or not isinstance(entries, list):
+    if not expected_domains or not isinstance(entries, list):
         return False
-    expected_host = expected_host.lower().rstrip(".")
+    exact_hosts = {domain.lower().rstrip(".") for domain in expected_domains if not domain.startswith("*.")}
+    wildcard_suffixes = [
+        domain[2:].lower().rstrip(".") for domain in expected_domains if domain.startswith("*.")
+    ]
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -83,7 +100,12 @@ def _har_contains_requested_host(har_path: Path, requested_url: str) -> bool:
             host = urlsplit(request_url).hostname
         except ValueError:
             continue
-        if host and host.lower().rstrip(".") == expected_host:
+        if not host:
+            continue
+        normalized_host = host.lower().rstrip(".")
+        if normalized_host in exact_hosts or any(
+            normalized_host.endswith(f".{suffix}") for suffix in wildcard_suffixes
+        ):
             return True
     return False
 
@@ -136,10 +158,16 @@ class OMPAutoEngineer(OMPEngineer):
                     if self.url
                     else "No starting URL was resolved; derive the target directly from the mission."
                 ),
+                allowed_domains_option=(
+                    f"allowed_domains: {json.dumps(_allowed_domains(self.url))},"
+                    if self.url
+                    else ""
+                ),
                 scripts_dir=str(self.scripts_dir),
                 har_path=str(self.har_path),
+                allowed_domains_json=json.dumps(_allowed_domains(self.url)) if self.url else "[]",
+                requested_url_json=json.dumps(self.url or ""),
                 har_path_json=json.dumps(str(self.har_path)),
-                requested_url_json=json.dumps(self.url) if self.url else "/* derive URL from the mission */",
                 run_id=self.run_id,
                 headed_option=f"headed: {str(not self.headless).lower()},",
             )

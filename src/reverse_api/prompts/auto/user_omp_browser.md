@@ -10,45 +10,119 @@
 
 ## Browser capture and code generation
 
-Use only OMP's JavaScript `eval` tool and its global `browser` facade for browser capture, honoring OMP's configured browser route. Do not use the RAE Playwright MCP. Open a fresh named tab without an `app` or `app.target` option so OMP selects the browser and no existing tab is adopted. Respect OMP's configured project approval policy; do not attempt to change approval settings or bypass an approval.
+Use only OMP's JavaScript `eval` tool and its global `browser` facade for browser capture, honoring OMP's configured browser route. Do not use the RAE Playwright MCP. Open a fresh named tab without an `app` or `app.target` option so OMP selects the browser and no existing tab is adopted. Respect OMP's configured project approval policy; do not attempt to change approval settings or bypass an approval. For page structure use `await tab.observe()` or `await tab.ariaSnapshot()`; the OMP facade has no `tab.snapshot()` method.
 
-Capture traffic into this exact HAR file: `{har_path}`. {starting_url_instruction} If no starting URL is supplied, derive the target from the mission's named site or service; replace the `tab.goto` placeholder with that concrete HTTP(S) URL. Do not choose an unrelated host or invent a target. If the mission does not identify a safe target clearly, stop and report the blocker. Complete the requested mission interactions while recording; do not stop HAR immediately after the initial page load unless that fulfills the mission. Do not follow links or navigate to other hosts unless the mission requires it. If the requested action requires credentials or approval that are unavailable, stop and report the exact blocker.
+Capture bounded, already-received API responses into this exact HAR file: `{har_path}`. {starting_url_instruction} If no starting URL is supplied, derive the target from the mission's named site or service; replace the `tab.goto` placeholder with that concrete HTTP(S) URL. Do not choose an unrelated host or invent a target. If the mission does not identify a safe target clearly, stop and report the blocker. Complete only authorized read-only mission interactions. Do not follow links or navigate to other hosts unless the mission requires it. If credentials or approval unavailable, stop and report the blocker.
 
-Use `content: "text"` to retain textual response bodies needed to infer API schemas; do not capture binary bodies. Text responses may contain private or sensitive data, so treat the local HAR as sensitive. Do not echo response data or copy credentials, cookies, tokens, session data, or personal data into generated files, logs, or summaries.
+Response bodies may include private data. Keep them in memory only; never print, log, or persist unredacted response data, URLs/query values, headers, cookies, tokens, session data, or feed/personal data.
 
-Follow this sequence in one JavaScript eval cell, adapting only the tab name and mission-specific interactions:
+Use two separate JavaScript Eval calls. Do not retain a JavaScript `tab` handle between calls; look up the named tab afresh in call 2.
+
+### Eval call 1: open, navigate, inspect
 
 ```javascript
-let tab;
-let recording = false;
-try {{
-  tab = await browser.open({{
-    name: "rae-{run_id}",
-    url: "about:blank",
-    timeout: 120,
-    {headed_option}
-  }});
-  await tab.harStart({{ content: "text" }});
-  recording = true;
-  await tab.goto({requested_url_json});
-  // Perform the mission-requested interactions here while HAR recording remains active.
-  const savedHarPath = await tab.harStop({{ path: {har_path_json} }});
-  recording = false;
-  console.log(`Saved HAR: ${{savedHarPath}}`);
-}} finally {{
-  if (tab) {{
-    if (recording) {{
-      try {{
-        await tab.harStop({{ path: {har_path_json} }});
-      }} catch {{}}
-    }}
-    try {{
-      await tab.close();
-    }} catch {{}}
-  }}
-}}
+const tab = await browser.open({{
+  name: "rae-{run_id}",
+  url: "about:blank",
+  timeout: 120,
+  persist: true,
+  {headed_option}
+  {allowed_domains_option}
+}});
+await tab.goto({requested_url_json});
+// Perform only mission-authorized read-only inspection; do not click or submit.
 ```
 
-Start HAR recording before navigating. When a supplied or unambiguous starting URL exists, verify that the saved HAR contains a request to its exact host before generating the client. Otherwise, verify that the HAR contains a valid request to the target selected from the mission. If the browser API reports that it cannot start or an approval is denied, report the exact failure; do not fall back to another browser or claim capture success.
+### Eval call 2: harvest completed GET JSON responses and write a redacted HAR
 
-Generate the requested client and supporting files in `{scripts_dir}`. Test the client against the captured API, then summarize the APIs found and whether execution succeeded.
+```javascript
+const tabName = "rae-{run_id}";
+const openTabs = await browser.tabs();
+if (!openTabs.some(({{ name }}) => name === tabName)) throw new Error("Capture tab is not open.");
+const tab = browser.tab(tabName);
+const requestedDomains = {allowed_domains_json};
+const isAllowedHost = host => requestedDomains.some(domain =>
+  domain.startsWith("*.") ? host.endsWith(`.${{domain.slice(2)}}`) : host === domain
+);
+const requestOptions = {{ type: ["fetch", "xhr", "document"], method: "GET", status: "2xx", limit: 50 }};
+const isJsonGet = r =>
+  r.method === "GET" &&
+  Number(r.status) >= 200 && Number(r.status) < 300 &&
+  (!r.sizes.responseBody || r.sizes.responseBody <= 1024 * 1024) &&
+  Object.entries(r.responseHeaders || {{}}).some(([k, v]) =>
+    k.toLowerCase() === "content-type" && /(?:application\/json|\+json)/i.test(v)
+  );
+let candidates = (await tab.requests(requestOptions))
+  .filter(r => isAllowedHost(new URL(r.url).hostname) && isJsonGet(r))
+  .slice(0, 3);
+for (let attempt = 0; !candidates.length && attempt < 3; attempt++) {{
+  // At most three viewport scrolls may trigger lazy-loaded read-only API requests; never click.
+  await tab.wheel(0, 600);
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  candidates = (await tab.requests(requestOptions))
+    .filter(r => isAllowedHost(new URL(r.url).hostname) && isJsonGet(r))
+    .slice(0, 3);
+}}
+const idLikeParents = new Set(["in", "pub", "people", "feed-member", "feed-member-id"]);
+const redactPath = pathname => pathname.split("/").map((segment, index, parts) => {{
+  const parent = parts[index - 1]?.toLowerCase();
+  return /^(?:\d+|urn:|[A-Fa-f0-9]{{12,}}|[A-Za-z0-9_-]{{24,}})/.test(segment) ||
+    idLikeParents.has(parent) ? ":id" : segment;
+}}).join("/");
+if (redactPath("/in/short-user-slug") !== "/in/:id") {{
+  throw new Error("Synthetic short-profile-slug redaction check failed.");
+}}
+const entries = [];
+for (const record of candidates) {{
+  // This loads only a response already received by the browser; never replay a request.
+  const detail = await tab.request(record.id);
+  if (typeof detail.body !== "string" || !/json/i.test(detail.contentType || "")) continue;
+  let parsed;
+  try {{ parsed = JSON.parse(detail.body); }} catch {{ continue; }}
+  const redact = value => {{
+    if (value === null) return null;
+    if (Array.isArray(value)) return value.length ? [redact(value[0])] : [];
+    if (typeof value === "string") return "<string>";
+    if (typeof value === "number") return 0;
+    if (typeof value === "boolean") return false;
+    if (typeof value === "object") {{
+      const out = {{}};
+      let index = 0;
+      for (const [key, child] of Object.entries(value).slice(0, 100)) {{
+        const safeKey = /^[A-Za-z][A-Za-z0-9_-]{{0,63}}$/.test(key) &&
+          !/@|urn:|\d{{6,}}|[A-Za-z0-9_-]{{24,}}/i.test(key)
+          ? key : `field_${{index}}`;
+        out[safeKey] = redact(child);
+        index++;
+      }}
+      return out;
+    }}
+    return null;
+  }};
+  const source = new URL(record.url);
+  const path = redactPath(source.pathname);
+  const safeUrl = new URL(`${{source.protocol}}//${{source.host}}${{path}}`);
+  for (const key of source.searchParams.keys()) {{
+    if (/^[A-Za-z][A-Za-z0-9_-]{{0,63}}$/.test(key)) safeUrl.searchParams.set(key, "<redacted>");
+  }}
+  const body = JSON.stringify(redact(parsed));
+  const bodySize = new TextEncoder().encode(body).length;
+  entries.push({{
+    startedDateTime: new Date(record.ts).toISOString(),
+    time: record.durationMs || 0,
+    request: {{ method: "GET", url: safeUrl.toString(), httpVersion: "HTTP/1.1", headers: [], queryString: [...safeUrl.searchParams.keys()].map(name => ({{ name, value: "<redacted>" }})), cookies: [], headersSize: -1, bodySize: 0 }},
+    response: {{ status: record.status, statusText: "OK", httpVersion: "HTTP/1.1", headers: [], cookies: [], content: {{ size: bodySize, mimeType: detail.contentType, text: body }}, redirectURL: "", headersSize: -1, bodySize }},
+    cache: {{}},
+    timings: {{ send: 0, wait: record.durationMs || 0, receive: 0 }}
+  }});
+}}
+if (!entries.length) throw new Error("No completed GET JSON response body was available to sanitize.");
+const har = {{ log: {{ version: "1.2", creator: {{ name: "RAE OMP capture", version: "1" }}, entries }} }};
+await Bun.write({har_path_json}, JSON.stringify(har));
+console.log({{ entryCount: entries.length, allowedHostPresent: entries.some(e => isAllowedHost(new URL(e.request.url).hostname)) }});
+await tab.close();
+```
+
+Select only completed 2xx GET `fetch`/`xhr` responses or JSON documents, and cap retrieval at three bodies and 1 MiB each. Never inspect or replay POST requests. Before writing, keep only JSON structure and stable schema property names; replace every scalar with a type placeholder and represent arrays with at most one redacted exemplar. Replace ID-like path segments, preserve safe query parameter names but replace all values, and omit all request/response header and cookie values. Do not store unredacted body, path IDs, query values, or personal data anywhere.
+
+Verify the written HAR has a request to the requested host or a host in `requestedDomains` before generation. `tab.request` runs in the logged-in browser context; generated external clients do not inherit those browser cookies. Never copy session credentials into a client. Generate the complete client when a schema-bearing HAR is available; missing authentication is not a reason to skip client generation. Use the existing language-specific runtime-auth/session conventions. If auth cannot be inferred because captured headers were redacted, document it as unverified and accept user-managed runtime authentication without guessing its format. Run syntax/structural checks; skip authenticated API calls unless safe runtime credentials are already configured, and report that limitation. Do not claim authenticated execution without user-managed runtime credentials. Do not create a placeholder client; stop only if the HAR has no usable endpoint schema.
