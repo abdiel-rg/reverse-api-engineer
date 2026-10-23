@@ -66,12 +66,10 @@ def _allowed_domains(url: str) -> list[str]:
     if host is None:
         return []
     domains = [host]
-    if host.startswith("www."):
-        parent = host[4:]
-        if len(parent.split(".")) >= 2:
-            domains.append(f"*.{parent}")
-            if parent == "linkedin.com":
-                domains.extend(["static.licdn.com", "media.licdn.com"])
+    # Only linkedin.com is explicitly approved for cross-subdomain HAR matching.
+    # Other www hosts stay exact: their parent domain may be a multi-tenant boundary.
+    if host == "www.linkedin.com":
+        domains.extend(["*.linkedin.com", "static.licdn.com", "media.licdn.com"])
     return domains
 
 

@@ -41,14 +41,19 @@ const openTabs = await browser.tabs();
 if (!openTabs.some(({{ name }}) => name === tabName)) throw new Error("Capture tab is not open.");
 const tab = browser.tab(tabName);
 const requestedDomains = {allowed_domains_json};
-const isAllowedHost = host => requestedDomains.some(domain =>
+// When no explicit domain was resolved, anchor capture to the actual target opened in call 1.
+const targetUrl = new URL(tab.url());
+if (!["http:", "https:"].includes(targetUrl.protocol)) throw new Error("Capture target is not HTTP(S).");
+const allowedDomains = requestedDomains.length ? requestedDomains : [targetUrl.hostname];
+const isAllowedHost = host => allowedDomains.some(domain =>
   domain.startsWith("*.") ? host.endsWith(`.${{domain.slice(2)}}`) : host === domain
 );
 const requestOptions = {{ type: ["fetch", "xhr", "document"], method: "GET", status: "2xx", limit: 50 }};
 const isJsonGet = r =>
   r.method === "GET" &&
   Number(r.status) >= 200 && Number(r.status) < 300 &&
-  (!r.sizes.responseBody || r.sizes.responseBody <= 1024 * 1024) &&
+  Number.isFinite(Number(r.sizes?.responseBody)) &&
+  Number(r.sizes.responseBody) > 0 && Number(r.sizes.responseBody) <= 1024 * 1024 &&
   Object.entries(r.responseHeaders || {{}}).some(([k, v]) =>
     k.toLowerCase() === "content-type" && /(?:application\/json|\+json)/i.test(v)
   );
@@ -63,42 +68,59 @@ for (let attempt = 0; !candidates.length && attempt < 3; attempt++) {{
     .filter(r => isAllowedHost(new URL(r.url).hostname) && isJsonGet(r))
     .slice(0, 3);
 }}
-const idLikeParents = new Set(["in", "pub", "people", "feed-member", "feed-member-id"]);
+const idLikeParents = new Set(["in", "pub", "people", "feed-member", "feed-member-id", "users", "user", "profiles", "profile", "members", "member", "entities", "entity"]);
+const staticPathSegments = new Set(["company", "companies", "school", "schools", "jobs", "groups", "events", "feed", "pulse", "learning"]);
 const redactPath = pathname => pathname.split("/").map((segment, index, parts) => {{
   const parent = parts[index - 1]?.toLowerCase();
   return /^(?:\d+|urn:|[A-Fa-f0-9]{{12,}}|[A-Za-z0-9_-]{{24,}})/.test(segment) ||
-    idLikeParents.has(parent) ? ":id" : segment;
+    (idLikeParents.has(parent) && !staticPathSegments.has(segment.toLowerCase())) ? ":id" : segment;
 }}).join("/");
-if (redactPath("/in/short-user-slug") !== "/in/:id") {{
+if (redactPath("/in/alice") !== "/in/:id" || redactPath("/users/alice") !== "/users/:id") {{
   throw new Error("Synthetic short-profile-slug redaction check failed.");
 }}
+const dynamicKeyParents = new Set(["user", "users", "profile", "profiles", "member", "members", "entity", "entities", "record", "records", "byid", "bykey", "byusername", "byuser", "byprofile", "byentity", "byrecord"]);
+const stableSchemaKeys = new Set([
+  "id", "type", "name", "title", "description", "url", "href", "text", "content", "body",
+  "status", "createdAt", "updatedAt", "firstName", "lastName", "username", "email", "count",
+  "total", "items", "results", "data", "attributes", "relationships", "metadata", "links",
+  "next", "previous", "page", "limit", "offset", "value", "label", "key", "code", "slug",
+  "kind", "role", "company", "companyName", "location", "author", "user", "users", "profile",
+  "profiles", "member", "members", "image", "avatar", "date", "timestamp", "startDate", "endDate"
+]);
+const redact = (value, parentKey = "") => {{
+  if (value === null) return null;
+  if (Array.isArray(value)) return value.length ? [redact(value[0])] : [];
+  if (typeof value === "string") return "<string>";
+  if (typeof value === "number") return 0;
+  if (typeof value === "boolean") return false;
+  if (typeof value === "object") {{
+    const out = {{}};
+    let index = 0;
+    for (const [key, child] of Object.entries(value).slice(0, 100)) {{
+      const safeKey = !dynamicKeyParents.has(parentKey.toLowerCase()) && stableSchemaKeys.has(key)
+        ? key : `field_${{index}}`;
+      out[safeKey] = redact(child, key);
+      index++;
+    }}
+    return out;
+  }}
+  return null;
+}};
+const sample = {{ data: {{ alice: {{ id: 1 }} }}, users: {{ bob: {{ id: 2 }} }} }};
+const expected = {{ data: {{ field_0: {{ id: 0 }} }}, users: {{ field_0: {{ id: 0 }} }} }};
+if (JSON.stringify(redact(sample)) !== JSON.stringify(expected)) {{
+  throw new Error("Synthetic short user-key redaction check failed.");
+}}
+const statusReasons = {{ 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 301: "Moved Permanently", 302: "Found", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable" }};
 const entries = [];
 for (const record of candidates) {{
   // This loads only a response already received by the browser; never replay a request.
   const detail = await tab.request(record.id);
-  if (typeof detail.body !== "string" || !/json/i.test(detail.contentType || "")) continue;
+  if (!isJsonGet(record) || typeof detail.body !== "string" ||
+      new TextEncoder().encode(detail.body).byteLength > 1024 * 1024 ||
+      !/json/i.test(detail.contentType || "")) continue;
   let parsed;
   try {{ parsed = JSON.parse(detail.body); }} catch {{ continue; }}
-  const redact = value => {{
-    if (value === null) return null;
-    if (Array.isArray(value)) return value.length ? [redact(value[0])] : [];
-    if (typeof value === "string") return "<string>";
-    if (typeof value === "number") return 0;
-    if (typeof value === "boolean") return false;
-    if (typeof value === "object") {{
-      const out = {{}};
-      let index = 0;
-      for (const [key, child] of Object.entries(value).slice(0, 100)) {{
-        const safeKey = /^[A-Za-z][A-Za-z0-9_-]{{0,63}}$/.test(key) &&
-          !/@|urn:|\d{{6,}}|[A-Za-z0-9_-]{{24,}}/i.test(key)
-          ? key : `field_${{index}}`;
-        out[safeKey] = redact(child);
-        index++;
-      }}
-      return out;
-    }}
-    return null;
-  }};
   const source = new URL(record.url);
   const path = redactPath(source.pathname);
   const safeUrl = new URL(`${{source.protocol}}//${{source.host}}${{path}}`);
@@ -106,12 +128,14 @@ for (const record of candidates) {{
     if (/^[A-Za-z][A-Za-z0-9_-]{{0,63}}$/.test(key)) safeUrl.searchParams.set(key, "<redacted>");
   }}
   const body = JSON.stringify(redact(parsed));
-  const bodySize = new TextEncoder().encode(body).length;
+  const bodySize = new TextEncoder().encode(body).byteLength;
+  const statusText = typeof detail.statusText === "string" ? detail.statusText :
+    typeof record.statusText === "string" ? record.statusText : statusReasons[Number(record.status)] ?? "";
   entries.push({{
     startedDateTime: new Date(record.ts).toISOString(),
     time: record.durationMs || 0,
     request: {{ method: "GET", url: safeUrl.toString(), httpVersion: "HTTP/1.1", headers: [], queryString: [...safeUrl.searchParams.keys()].map(name => ({{ name, value: "<redacted>" }})), cookies: [], headersSize: -1, bodySize: 0 }},
-    response: {{ status: record.status, statusText: "OK", httpVersion: "HTTP/1.1", headers: [], cookies: [], content: {{ size: bodySize, mimeType: detail.contentType, text: body }}, redirectURL: "", headersSize: -1, bodySize }},
+    response: {{ status: record.status, statusText, httpVersion: "HTTP/1.1", headers: [], cookies: [], content: {{ size: bodySize, mimeType: detail.contentType, text: body }}, redirectURL: "", headersSize: -1, bodySize }},
     cache: {{}},
     timings: {{ send: 0, wait: record.durationMs || 0, receive: 0 }}
   }});

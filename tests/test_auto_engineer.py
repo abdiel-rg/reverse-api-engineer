@@ -212,11 +212,21 @@ class TestClaudeAutoEngineerPrompt:
         assert "missing authentication is not a reason to skip client generation" in user_message
         assert "Do not claim authenticated execution without user-managed runtime credentials" in user_message
         assert f"await Bun.write(\"{engineer.har_path}\"" in user_message
-        assert 'new Set(["in", "pub", "people", "feed-member", "feed-member-id"])' in user_message
-        assert 'redactPath("/in/short-user-slug") !== "/in/:id"' in user_message
+        assert '"users", "user", "profiles", "profile", "members", "member"' in user_message
+        assert 'redactPath("/in/alice") !== "/in/:id"' in user_message
+        assert 'redactPath("/users/alice") !== "/users/:id"' in user_message
         assert r"/(?:application\/json|\+json)/i.test(v)" in user_message
         assert "const redactPath = pathname" in user_message
         assert "urn:" in user_message
+        assert "const targetUrl = new URL(tab.url())" in user_message
+        assert "Number.isFinite(Number(r.sizes?.responseBody))" in user_message
+        assert "Number(r.sizes.responseBody) > 0" in user_message
+        assert "new TextEncoder().encode(detail.body).byteLength > 1024 * 1024" in user_message
+        assert "const stableSchemaKeys = new Set([" in user_message
+        assert "const sample = { data: { alice: { id: 1 } }, users: { bob: { id: 2 } } }" in user_message
+        assert 'typeof detail.statusText === "string"' in user_message
+        assert 'typeof record.statusText === "string"' in user_message
+        assert "statusReasons[Number(record.status)]" in user_message
 
     def test_omp_prompt_derives_mission_target_without_url_placeholder(self, tmp_path):
         from reverse_api.auto_engineer import OMPAutoEngineer
@@ -251,6 +261,8 @@ class TestClaudeAutoEngineerPrompt:
         assert "No starting URL was resolved; derive the target directly from the mission." in user_message
         assert "Do not follow links or navigate to other hosts unless the mission requires it." in user_message
         assert "allowed_domains:" not in user_message
+        assert "const requestedDomains = []" in user_message
+        assert "const allowedDomains = requestedDomains.length ? requestedDomains : [targetUrl.hostname]" in user_message
 
     def test_omp_url_resolution_preserves_balanced_trailing_parenthesis(self):
         from reverse_api.auto_engineer import _resolve_requested_url
@@ -384,6 +396,25 @@ class TestClaudeAutoEngineerPrompt:
 
         assert result is not None
         assert engineer.har_path.is_file()
+
+
+    @pytest.mark.parametrize(
+        ("requested_url", "expected_domains"),
+        [
+            ("https://www.github.io", ["www.github.io"]),
+            ("https://www.customer.example", ["www.customer.example"]),
+            (
+                "https://www.linkedin.com/feed/",
+                ["www.linkedin.com", "*.linkedin.com", "static.licdn.com", "media.licdn.com"],
+            ),
+        ],
+    )
+    def test_allowed_domains_only_wildcards_the_verified_domain(
+        self, requested_url, expected_domains
+    ):
+        from reverse_api.auto_engineer import _allowed_domains
+
+        assert _allowed_domains(requested_url) == expected_domains
 
 
     @pytest.mark.parametrize(

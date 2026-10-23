@@ -91,8 +91,6 @@ async def test_omp_auto_uses_native_browser_and_rejects_success_without_capture(
     assert "without an `app` or `app.target` option" in captured["user_message"]
     assert "app: { relay: false, tern: false }" not in captured["user_message"]
     assert "timeout: 120" in captured["user_message"]
-    assert "tab.harStart" in captured["user_message"]
-    assert "tab.harStop" in captured["user_message"]
     assert str(engineer.har_path) in captured["user_message"]
 
 
