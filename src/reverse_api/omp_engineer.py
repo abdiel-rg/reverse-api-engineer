@@ -29,7 +29,7 @@ class OMPEngineer(BaseEngineer):
         self,
         system_prompt: str,
         user_message: str,
-        mcp_servers: dict[str, dict[str, Any]] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
     ) -> bool:
         executable = shutil.which("omp")
         if executable is None:

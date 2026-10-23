@@ -378,7 +378,7 @@ class ClaudeAutoEngineer(ClaudeEngineer):
         # Auto-approve all other tools
         return PermissionResultAllow(updated_input=input_data)
 
-    def _get_mcp_config(self) -> tuple[str, McpStdioServerConfig]:
+    def _get_mcp_config(self: AutoPromptEngineer) -> tuple[str, McpStdioServerConfig]:
         """Return ``(server_name, mcp_config)`` for Playwright or Chrome MCP providers.
 
         Not applicable to ``agent-browser`` (calling this raises). Auto-connect Chrome
