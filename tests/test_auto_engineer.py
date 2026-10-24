@@ -175,6 +175,27 @@ class TestClaudeAutoEngineerPrompt:
         assert f"await Bun.write(\"{engineer.har_path}\"" in user_message
         assert str(engineer.scripts_dir / engineer._get_client_filename()) in user_message
 
+    def test_omp_auto_prompt_resolves_relative_har_paths(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        from reverse_api.auto_engineer import OMPAutoEngineer
+
+        monkeypatch.chdir(tmp_path)
+        engineer = OMPAutoEngineer(
+            run_id="relative-har",
+            prompt="Inspect https://example.com",
+            output_dir="relative-output",
+            verbose=False,
+        )
+        expected_har_path = str(
+            (tmp_path / "relative-output" / "har" / "relative-har" / "recording.har").resolve()
+        )
+        _, user_message = engineer._get_active_prompts()
+
+        assert engineer.har_path == Path(expected_har_path)
+        assert user_message.count(expected_har_path) == 2
+        assert f'await Bun.write("{expected_har_path}"' in user_message
+
     def test_omp_capture_prompt_bounds_and_progresses_body_reads(self, tmp_path):
         from reverse_api.auto_engineer import OMPAutoEngineer
 

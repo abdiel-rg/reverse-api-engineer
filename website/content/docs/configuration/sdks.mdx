@@ -134,12 +134,13 @@ An empty `omp_model` leaves model selection to OMP's existing configuration.
 Set it to a model identifier to override that selection for RAE runs.
 The `omp` executable must be available in `PATH`.
 
-In agent mode, OMP's `auto` provider uses OMP's built-in JavaScript `eval`
-browser facade and writes its HAR directly to the RAE run path. It opens a fresh
-named tab without an `app` or `app.target` override, so OMP selects its
-configured browser route; a configured CDP endpoint or available cmux browser
-may take precedence over managed Chromium. This does not change OMP project or
-global settings.
+In agent mode, OMP's `auto` workflow instructs the agent to use OMP's
+built-in JavaScript `eval` browser facade and write the HAR directly to the
+RAE run path. The prompt asks the agent to open a fresh named tab without
+`app` or `app.target` options; this does not guarantee a specific browser
+backend. OMP's normal selection rules apply, so a configured CDP endpoint or
+available cmux browser may take precedence over managed Chromium. This does not
+change OMP project or global settings.
 
 Agent-mode OMP runs without MCP use the RAE output root as OMP's working
 directory, not necessarily the directory from which RAE was invoked. OMP
