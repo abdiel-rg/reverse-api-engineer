@@ -13,6 +13,34 @@ from .base_engineer import BaseEngineer
 from .runtime_commands import resolve_windows_command
 
 
+def _extract_omp_json_text(stdout: bytes) -> str:
+    """Return only the final assistant text from OMP's JSON event stream."""
+    final_text = ""
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "message_end":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        final_text = (
+            "\n".join(
+                block["text"]
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") == "text"
+                and isinstance(block.get("text"), str)
+            ).strip()
+            if isinstance(content, list)
+            else ""
+        )
+    return final_text
+
+
 class OMPEngineer(BaseEngineer):
     """Run code generation through the user's configured Oh My Pi CLI."""
 
@@ -48,6 +76,8 @@ class OMPEngineer(BaseEngineer):
                 executable,
                 "--print",
                 "--no-session",
+                "--mode",
+                "json",
                 "--cwd",
                 workspace,
             ]
@@ -90,7 +120,7 @@ class OMPEngineer(BaseEngineer):
             if temp_workspace:
                 temp_workspace.cleanup()
 
-        output = stdout.decode("utf-8", errors="replace").strip()
+        output = _extract_omp_json_text(stdout)
         if output:
             self.ui.thinking(output)
             self.message_store.save_thinking(output)

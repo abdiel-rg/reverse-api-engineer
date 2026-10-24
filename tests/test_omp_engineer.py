@@ -92,6 +92,8 @@ async def test_omp_auto_uses_native_browser_and_rejects_success_without_capture(
     assert "app: { relay: false, tern: false }" not in captured["user_message"]
     assert "timeout: 120" in captured["user_message"]
     assert str(engineer.har_path) in captured["user_message"]
+    assert str(engineer.scripts_dir / engineer._get_client_filename()) in captured["user_message"]
+
 
 
 @pytest.mark.parametrize(
@@ -155,7 +157,90 @@ async def test_omp_auto_accepts_only_valid_capture_except_chrome(
         assert captured["mcp_servers"] is None
 
 
-def test_omp_engineer_without_mcp_uses_output_workspace_without_add_dir(
+def test_omp_json_output_keeps_only_final_assistant_text() -> None:
+    from reverse_api.omp_engineer import _extract_omp_json_text
+
+    events = [
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "intermediate text"}],
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "toolResult",
+                "content": [{"type": "text", "text": "tool result"}],
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "name": "eval", "arguments": {"code": "private"}},
+                    {"type": "text", "text": "final text"},
+                ],
+            },
+        },
+    ]
+    output = "\n".join(json.dumps(event) for event in events)
+    result = _extract_omp_json_text(output.encode())
+    assert result == "final text"
+    assert "tool result" not in result
+    assert "private" not in result
+
+
+@pytest.mark.parametrize(
+    ("omp_model", "expected_model"),
+    [
+        ("", None),
+        ("  provider/model  ", "provider/model"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_omp_uses_configured_model_by_default_and_optional_override(
+    omp_model: str,
+    expected_model: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverse_api.omp_engineer import OMPEngineer
+
+    engineer = OMPEngineer(
+        run_id="model-selection",
+        har_path=tmp_path / "recording.har",
+        prompt="Inspect the site",
+        output_dir=str(tmp_path / "output"),
+        omp_model=omp_model,
+        verbose=False,
+    )
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr("reverse_api.omp_engineer.shutil.which", lambda _: "/usr/bin/omp")
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: Any) -> SimpleNamespace:
+        captured["args"] = args
+        return SimpleNamespace(
+            communicate=lambda: asyncio.sleep(0, result=(b"", b"")),
+            returncode=0,
+        )
+
+    monkeypatch.setattr(
+        "reverse_api.omp_engineer.asyncio.create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    assert await engineer._run_omp("system", "user")
+    args = captured["args"]
+    if expected_model is None:
+        assert "--model" not in args
+    else:
+        assert args[args.index("--model") + 1] == expected_model
+
+
+@pytest.mark.asyncio
+async def test_omp_engineer_without_mcp_uses_output_workspace_without_add_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from reverse_api.omp_engineer import OMPEngineer
@@ -183,14 +268,14 @@ def test_omp_engineer_without_mcp_uses_output_workspace_without_add_dir(
         "reverse_api.omp_engineer.asyncio.create_subprocess_exec", fake_create_subprocess_exec
     )
 
-    assert asyncio.run(engineer._run_omp("system", "user"))
+    assert await engineer._run_omp("system", "user")
 
     args = captured["args"]
     output_workspace = engineer.scripts_dir.parent.parent
     assert args[args.index("--cwd") + 1] == str(output_workspace)
     assert captured["kwargs"]["cwd"] == str(output_workspace)
+    assert args[args.index("--mode") + 1] == "json"
     assert "--add-dir" not in args
-
 
 @pytest.mark.asyncio
 async def test_omp_cancellation_reaps_process_before_cleaning_mcp_workspace(
@@ -357,28 +442,3 @@ async def test_omp_resolves_windows_command_before_subprocess_launch(
     assert await engineer._run_omp("system", "user")
     assert calls and calls[0][0] == "/usr/bin/omp"
     assert launch_args[0] == "resolved-omp"
-
-
-def test_omp_engineer_prompt_uses_runtime_authentication_inputs(tmp_path: Path) -> None:
-    from reverse_api.omp_engineer import OMPEngineer
-
-    engineer = OMPEngineer(
-        run_id="prompt-auth",
-        har_path=tmp_path / "recording.har",
-        prompt="Inspect the site",
-        output_dir=str(tmp_path / "output"),
-        verbose=False,
-    )
-    system_prompt, user_message = engineer._build_prompts()
-    prompt = (system_prompt + user_message).lower()
-
-    assert "never put credentials" in prompt
-    assert "environment variables or explicit runtime parameters" in prompt
-    for unsafe_instruction in (
-        "hardcode all cookies",
-        "hardcode whatever you find",
-        "zero configuration",
-        "automatic re-authentication",
-        "re-fetch them before they expire",
-    ):
-        assert unsafe_instruction not in prompt

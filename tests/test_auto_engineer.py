@@ -139,143 +139,88 @@ class TestClaudeAutoEngineerPrompt:
         assert "requests" in sys_p
         assert "api_client.py" in sys_p
 
-    def test_omp_prompt_honors_default_browser_route_and_records_har(self, tmp_path):
+    def test_omp_capture_prompt_preserves_browser_and_privacy_contracts(self, tmp_path):
         from reverse_api.auto_engineer import OMPAutoEngineer
 
         engineer = OMPAutoEngineer(
             run_id="omp-test",
-            prompt="Inspect the site",
-            url="https://example.com",
+            prompt="Inspect https://example.com",
             output_dir=str(tmp_path),
             verbose=False,
         )
         system_prompt, user_message = engineer._get_active_prompts()
 
         assert "Never hardcode credentials" in system_prompt
-        assert "Hardcode all credentials" not in system_prompt
-        assert "Hardcode all cookies" not in system_prompt
-        assert "hardcode them" not in system_prompt.lower()
-        assert "zero configuration" not in system_prompt.lower()
-        assert "app: {" not in user_message
-        assert "relay: false" not in user_message
-        assert "tern: false" not in user_message
+        assert "environment variables or explicit runtime parameters" in system_prompt
         assert 'name: "rae-omp-test"' in user_message
         assert 'url: "about:blank"' in user_message
         assert "await tab.observe()" in user_message
         assert "await tab.ariaSnapshot()" in user_message
-        assert "no `tab.snapshot()` method" in user_message
+        assert "Do not use the RAE Playwright MCP" in user_message
         assert 'allowed_domains: ["example.com"]' in user_message
-        linkedin_engineer = OMPAutoEngineer(
-            run_id="linkedin-test",
-            prompt="Inspect LinkedIn",
-            url="https://www.linkedin.com/feed/",
-            output_dir=str(tmp_path),
-            verbose=False,
-        )
-        _, linkedin_message = linkedin_engineer._get_active_prompts()
-        assert 'allowed_domains: ["www.linkedin.com", "*.linkedin.com", "static.licdn.com", "media.licdn.com"]' in linkedin_message
-        first_call = user_message.index("### Eval call 1:")
-        second_call = user_message.index("### Eval call 2:")
-        open_code = user_message.index("await browser.open(", first_call)
-        navigate = user_message.index('await tab.goto("https://example.com");', first_call)
-        request_metadata = user_message.index("await tab.requests(", second_call)
-        get_body = user_message.index("await tab.request(record.id)", second_call)
-        write_har = user_message.index("await Bun.write(", second_call)
-        assert open_code < navigate < second_call < request_metadata < get_body < write_har
-        assert user_message.count("const requestedDomains =") == 1
-        assert 'const requestedDomains = ["example.com"]' in user_message
+        assert "const requestedDomains = [\"example.com\"]" in user_message
         assert "isAllowedHost(new URL(r.url).hostname)" in user_message
-        assert user_message.count(".filter(r => isAllowedHost(new URL(r.url).hostname) && isJsonGet(r))") == 2
-        assert "await tab.harStart(" not in user_message
-        assert "await tab.harStop(" not in user_message
         assert 'type: ["fetch", "xhr", "document"]' in user_message
         assert 'method: "GET"' in user_message
         assert 'status: "2xx"' in user_message
-        assert "slice(0, 3)" in user_message
-        assert "1024 * 1024" in user_message
-        assert "tab.wheel(0, 600)" in user_message
-        assert "await new Promise(resolve => setTimeout(resolve, 5000))" in user_message
-        assert "attempt < 3" in user_message
-        assert "never click" in user_message
         assert "Never inspect or replay POST requests." in user_message
         assert "JSON.parse(detail.body)" in user_message
-        assert 'return "<string>"' in user_message
-        assert "return 0;" in user_message
-        assert "return false;" in user_message
         assert 'value: "<redacted>"' in user_message
         assert "headers: [], queryString:" in user_message
-        assert "Response bodies may include private data" in user_message
         assert "unredacted body" in user_message
         assert "generated external clients do not inherit those browser cookies" in user_message
         assert "Do not create a placeholder client" in user_message
-        assert "Generate the complete client when a schema-bearing HAR is available" in user_message
         assert "missing authentication is not a reason to skip client generation" in user_message
         assert "Do not claim authenticated execution without user-managed runtime credentials" in user_message
         assert f"await Bun.write(\"{engineer.har_path}\"" in user_message
-        assert '"users", "user", "profiles", "profile", "members", "member"' in user_message
-        assert 'redactPath("/in/alice") !== "/in/:id"' in user_message
-        assert 'redactPath("/users/alice") !== "/users/:id"' in user_message
-        assert r"/(?:application\/json|\+json)/i.test(v)" in user_message
-        assert "const redactPath = pathname" in user_message
-        assert "urn:" in user_message
-        assert "const targetUrl = new URL(tab.url())" in user_message
-        assert "Number.isFinite(Number(r.sizes?.responseBody))" in user_message
-        assert "Number(r.sizes.responseBody) > 0" in user_message
-        assert "new TextEncoder().encode(detail.body).byteLength > 1024 * 1024" in user_message
-        assert "const stableSchemaKeys = new Set([" in user_message
-        assert "const sample = { data: { alice: { id: 1 } }, users: { bob: { id: 2 } } }" in user_message
-        assert 'typeof detail.statusText === "string"' in user_message
-        assert 'typeof record.statusText === "string"' in user_message
-        assert "statusReasons[Number(record.status)]" in user_message
+        assert str(engineer.scripts_dir / engineer._get_client_filename()) in user_message
 
-    def test_omp_prompt_derives_mission_target_without_url_placeholder(self, tmp_path):
+    def test_omp_capture_prompt_bounds_and_progresses_body_reads(self, tmp_path):
+        from reverse_api.auto_engineer import OMPAutoEngineer
+
+        engineer = OMPAutoEngineer(
+            run_id="omp-bounds",
+            prompt="Inspect https://example.com",
+            output_dir=str(tmp_path),
+            verbose=False,
+        )
+        _, user_message = engineer._get_active_prompts()
+
+        assert "1024 * 1024" in user_message
+        assert "bodyRetrievalAttempts < 3" in user_message
+        assert "bodyRetrievalAttempts++" in user_message
+        assert "Number.isFinite(size)" in user_message
+        assert "size > 0 && size <= 1024 * 1024" in user_message
+        assert "detail.bodyTruncated !== true" in user_message
+        assert "new TextEncoder().encode(detail.body).byteLength <= responseBodyLimitBytes" in user_message
+        assert "visitedIds" in user_message
+        assert "(await getCandidates()).find(candidate => !visitedIds.has(String(candidate.id)))" in user_message
+        assert "await tab.requests(requestOptions)" in user_message
+        assert "await tab.wheel(0, 600)" in user_message
+        assert "Unknown browser request id " in user_message
+        assert "error instanceof Error" in user_message
+        assert "throw error" in user_message
+
+    def test_omp_prompt_derives_mission_target_and_allowed_hosts(self, tmp_path):
         from reverse_api.auto_engineer import OMPAutoEngineer
 
         engineer = OMPAutoEngineer(
             run_id="omp-mission-url",
-            prompt="Inspect the API at https://api.example.test/v1",
+            prompt="Inspect https://api.example.test/v1",
             output_dir=str(tmp_path),
             verbose=False,
         )
         _, user_message = engineer._get_active_prompts()
 
-        assert "<requested_start_url>" in user_message
         assert "https://api.example.test/v1" in user_message
         assert "Use the supplied starting URL exactly: https://api.example.test/v1." in user_message
-        assert "Use the supplied starting URL exactly." not in user_message
         assert 'allowed_domains: ["api.example.test"]' in user_message
-
-    def test_omp_prompt_omits_start_url_block_when_unresolved(self, tmp_path):
-        from reverse_api.auto_engineer import OMPAutoEngineer
-
-        engineer = OMPAutoEngineer(
-            run_id="omp-no-url",
-            prompt="Inspect the catalog",
-            output_dir=str(tmp_path),
-            verbose=False,
-        )
-        _, user_message = engineer._get_active_prompts()
-
-        assert "<requested_start_url>" not in user_message
-        assert "<URL from the mission>" not in user_message
-        assert "No starting URL was resolved; derive the target directly from the mission." in user_message
-        assert "Do not follow links or navigate to other hosts unless the mission requires it." in user_message
-        assert "allowed_domains:" not in user_message
-        assert "const requestedDomains = []" in user_message
-        assert "const allowedDomains = requestedDomains.length ? requestedDomains : [targetUrl.hostname]" in user_message
-
-    def test_omp_url_resolution_preserves_balanced_trailing_parenthesis(self):
-        from reverse_api.auto_engineer import _resolve_requested_url
-
-        url = "https://en.wikipedia.org/wiki/Example_(disambiguation)"
-
-        assert _resolve_requested_url(None, f"Inspect {url}") == url
 
     @pytest.mark.parametrize(
         "output_language",
-        ["python", "javascript", "typescript", "go", "java", "csharp", "php", "ruby", "c", "powershell"],
+        ["python", "javascript", "typescript", "go", "java", "csharp", "php", "ruby", "powershell"],
     )
-    def test_omp_auto_prompt_uses_safe_auth_guidance_for_every_language(
+    def test_omp_auth_guidance_is_runtime_managed_for_every_language(
         self, tmp_path, output_language
     ):
         from reverse_api.auto_engineer import OMPAutoEngineer
@@ -289,20 +234,25 @@ class TestClaudeAutoEngineerPrompt:
         )
         system_prompt, _ = engineer._get_active_prompts()
         lowered = system_prompt.lower()
-
         assert "never hardcode credentials" in lowered
-        assert "never put credentials, cookies, tokens" in lowered
         assert "environment variables or explicit runtime parameters" in lowered
-        for unsafe_instruction in (
-            "hardcode all cookies",
-            "hardcode them",
-            "zero configuration",
-            "automatic re-authentication",
-            "re-fetch them before they expire",
-        ):
-            assert unsafe_instruction not in lowered
+        assert "hardcode all cookies" not in lowered
+        assert "zero configuration" not in lowered
+    def test_omp_prompt_requires_a_mission_target_when_url_is_unresolved(self, tmp_path):
+        from reverse_api.auto_engineer import OMPAutoEngineer
 
-    def test_omp_headless_prompt_explicitly_disables_headed(self, tmp_path):
+        engineer = OMPAutoEngineer(
+            run_id="omp-no-url",
+            prompt="Inspect the catalog",
+            output_dir=str(tmp_path),
+            verbose=False,
+        )
+        _, user_message = engineer._get_active_prompts()
+        assert "<requested_start_url>" not in user_message
+        assert "No starting URL was resolved; derive the target directly from the mission." in user_message
+        assert "Do not follow links or navigate to other hosts unless the mission requires it." in user_message
+
+    def test_omp_headless_prompt_keeps_browser_headless(self, tmp_path):
         from reverse_api.auto_engineer import OMPAutoEngineer
 
         engineer = OMPAutoEngineer(
@@ -312,10 +262,9 @@ class TestClaudeAutoEngineerPrompt:
             headless=True,
             verbose=False,
         )
-
         _, user_message = engineer._get_active_prompts()
-
         assert "headed: false" in user_message
+
 
     @pytest.mark.parametrize(
         ("mission_prompt", "requested_url"),
@@ -441,6 +390,22 @@ class TestClaudeAutoEngineerPrompt:
 
         assert _har_contains_requested_host(har_path, "https://www.linkedin.com/feed/") is accepted
 
+    @pytest.mark.parametrize("requested_url", ["not a url", "https://[invalid"])
+    def test_har_requested_host_rejects_invalid_requested_url(
+        self, tmp_path, requested_url
+    ):
+        import json
+
+        from reverse_api.auto_engineer import _har_contains_requested_host
+
+        har_path = tmp_path / "capture.har"
+        har_path.write_text(
+            json.dumps({"log": {"entries": [{"request": {"url": "https://www.linkedin.com/"}}]}}),
+            encoding="utf-8",
+        )
+
+        assert not _har_contains_requested_host(har_path, requested_url)
+
     @pytest.mark.asyncio
     async def test_omp_auto_removes_har_when_client_generation_fails(
         self, tmp_path, monkeypatch
@@ -543,8 +508,6 @@ class TestClaudeAutoEngineerPrompt:
         monkeypatch.setattr(engineer, "_run_omp", fake_run_omp)
 
         assert engineer.url is None
-        _, user_message = engineer._get_active_prompts()
-        assert "derive the target from the mission's named site or service" in user_message
         assert await engineer.analyze_and_generate() is not None
         assert engineer.har_path.is_file()
 

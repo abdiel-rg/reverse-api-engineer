@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Generated JavaScript and C# client testing uses only documented runtime credentials; missing secrets are reported rather than hardcoded. Ruby cookie guidance distinguishes response-set cookies from captured HAR values.
+- OMP auto-capture runs in JSON event mode without persisting raw tool results, scans newest-first past stale or bodyless eligible responses while retrieving at most three bodies of 1 MiB each, and makes the exact client path a required post-capture completion condition.
 
 
 ## [0.14.0] - 2026-09-23

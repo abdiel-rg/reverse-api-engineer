@@ -162,6 +162,7 @@ class OMPAutoEngineer(OMPEngineer):
                     else ""
                 ),
                 scripts_dir=str(self.scripts_dir),
+                client_path=str(self.scripts_dir / self._get_client_filename()),
                 har_path=str(self.har_path),
                 allowed_domains_json=json.dumps(_allowed_domains(self.url)) if self.url else "[]",
                 requested_url_json=json.dumps(self.url or ""),
